@@ -53,6 +53,8 @@ public sealed class FarmModeService : IDisposable
     // ---- v4 mounted travel state ----
     private const double MountCastTimeoutSeconds = 3.0;
     private const double MountGiveUpSeconds = 30.0;
+    private const double DismountRetrySeconds = 2.0;
+    private DateTime _lastDismountPressUtc = DateTime.MinValue;
     private DateTime? _mountCastRequestedUtc;
     private bool _mountCastRetried;
     private DateTime _suppressMountUntilUtc = DateTime.MinValue;
@@ -61,6 +63,9 @@ public sealed class FarmModeService : IDisposable
 
     /// <summary>User-facing progress/state notifications (Plugin routes these to chat).</summary>
     public event Action<string>? Notify;
+
+    /// <summary>A run ended. True when it reached its goal, false when it was stopped short.</summary>
+    public event Action<bool>? Ended;
 
     public FarmProfile Profile { get; } = new();
     public bool IsRunning { get; private set; }
@@ -134,7 +139,9 @@ public sealed class FarmModeService : IDisposable
         return null;
     }
 
-    public void Stop(string reason)
+    public void Stop(string reason) => Stop(reason, completed: false);
+
+    private void Stop(string reason, bool completed)
     {
         if (!IsRunning)
             return;
@@ -152,6 +159,7 @@ public sealed class FarmModeService : IDisposable
         }
         Notify?.Invoke($"Farm stopped — {reason}. {GoalText()}, {Kills} kills this run.");
         _log.Info("[Farm] stopped: {0}", reason);
+        Ended?.Invoke(completed);
     }
 
     /// <summary>The goal and how far along it is, for the chat lines.</summary>
@@ -195,13 +203,13 @@ public sealed class FarmModeService : IDisposable
         {
             if (_huntLog.KillsLeft(hunt) == 0)
             {
-                Stop("hunt log target filled");
+                Stop("hunt log target filled", completed: true);
                 return;
             }
         }
         else if (FarmRoamPolicy.IsComplete(CurrentItemCount, Profile.TargetCount))
         {
-            Stop("target count reached");
+            Stop("target count reached", completed: true);
             return;
         }
 
@@ -412,23 +420,40 @@ public sealed class FarmModeService : IDisposable
                 return true;
 
             case FarmTravelAction.LandThenDismount:
-                // Airborne at the mob: descend on a ground path first — a mid-air dismount is
-                // fall damage or a stuck float. fly=false forces the landing.
-                if (!_vNav.IsPathRunning && !_vNav.IsPathfindInProgress)
-                    _vNav.PathfindAndMoveTo(_vNav.SnapToFloor(destination), fly: false);
+                // Airborne at the mob. Dismount pressed in the air is a descent: the mount flies
+                // down, lands, and the next press gets off (what Demeter's travel does). A ground
+                // path asked of the navmesh does NOT land a flying mount: the character hovered
+                // over the mob, still mounted, and nothing attacked (2026-11-19).
+                if (_vNav.IsPathRunning || _vNav.IsPathfindInProgress)
+                    _vNav.Stop();
+                PressDismount();
                 StatusLine = $"Landing near {label}";
                 return true;
 
             case FarmTravelAction.Dismount:
                 if (_vNav.IsPathRunning || _vNav.IsPathfindInProgress)
                     _vNav.Stop();
-                _mount.TryDismount();
+                PressDismount();
                 StatusLine = "Dismounting";
                 return true;
 
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Dismount, asked again every couple of seconds until it takes rather than every poll: in the
+    /// air the first press only starts the descent, and a press landing in the gap while the
+    /// mounted flag clears is eaten.
+    /// </summary>
+    private void PressDismount()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastDismountPressUtc).TotalSeconds < DismountRetrySeconds)
+            return;
+        _lastDismountPressUtc = now;
+        _mount.TryDismount();
     }
 
     private void CastMount()

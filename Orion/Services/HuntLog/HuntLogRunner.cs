@@ -50,6 +50,12 @@ public sealed class HuntLogRunner : IDisposable
     private DateTime _lastKillAt;
     private int _filled;
 
+    /// <summary>
+    /// A run ended. True when it ran out of work on its own with at least one target filled; false
+    /// when it was stopped, failed, or had nothing it could do from the start.
+    /// </summary>
+    public event Action<bool>? Ended;
+
     public bool IsRunning => _phase != Phase.Idle;
     public string StatusLine { get; private set; } = "Idle";
     public HuntLogBook? Book => _book;
@@ -120,7 +126,12 @@ public sealed class HuntLogRunner : IDisposable
         return IsRunning ? null : "nothing on this rank can be done from here (see chat)";
     }
 
-    public void Stop(string reason)
+    public void Stop(string reason) => Stop(reason, completed: false);
+
+    /// <summary>The run has nothing left it can do: an end of its own making.</summary>
+    private void Finish(string reason) => Stop(reason, completed: _filled > 0);
+
+    private void Stop(string reason, bool completed)
     {
         if (!IsRunning)
             return;
@@ -132,6 +143,7 @@ public sealed class HuntLogRunner : IDisposable
             _farm.Stop("hunt log run stopped");
         _say($"Hunt log run stopped — {reason}. {_filled} target(s) filled"
              + (_skipped.Count > 0 ? $", {_skipped.Count} skipped." : "."));
+        Ended?.Invoke(completed);
     }
 
     /// <summary>Framework-thread tick.</summary>
@@ -187,7 +199,7 @@ public sealed class HuntLogRunner : IDisposable
         }
         if (rank >= HuntLogIds.RanksPerLog)
         {
-            Stop("the log is complete");
+            Finish("the log is complete");
             return;
         }
 
@@ -219,9 +231,9 @@ public sealed class HuntLogRunner : IDisposable
         if (candidates.Count == 0)
         {
             if (_skipped.Count > 0)
-                Stop("nothing left on this rank that can be done");
+                Finish("nothing left on this rank that can be done");
             else if (settled)
-                Stop("the rank is finished");
+                Finish("the rank is finished");
             else
                 Enter(Phase.Settling, now); // every target filled: give the game a moment to turn the page
             return;
@@ -232,7 +244,7 @@ public sealed class HuntLogRunner : IDisposable
         {
             foreach (var candidate in candidates)
                 Note(candidate.Target, "no attuned aetheryte in any zone it lives in");
-            Stop("nothing left on this rank that can be reached");
+            Finish("nothing left on this rank that can be reached");
             return;
         }
 

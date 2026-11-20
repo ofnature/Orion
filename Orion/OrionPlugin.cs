@@ -42,6 +42,15 @@ public sealed class OrionPlugin : IDalamudPlugin
     private readonly HuntLogRunner _hunt;
     private readonly TrophyRunner _trophy;
     private readonly ChocoboKeeper _chocobo;
+    private readonly TravelWorld _world;
+    private readonly ChatCommandSender _chat;
+
+    /// <summary>The trip home still to be sent after a completed run, and when it was queued.</summary>
+    private string? _homeCommand;
+    private DateTime _homeQueuedAt;
+
+    /// <summary>A trip home that cannot be sent for this long (still in a fight, a cutscene) is dropped.</summary>
+    private static readonly TimeSpan HomeGiveUp = TimeSpan.FromMinutes(2);
     private readonly GarlandDropSource _dropSource;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
@@ -73,6 +82,8 @@ public sealed class OrionPlugin : IDalamudPlugin
             ClientState, ObjectTable, Condition, DataManager,
             new AriadneIpc(PluginInterface, Warn), new LifestreamIpc(PluginInterface, Warn), daedalus,
             new AetheryteCatalog(DataManager, Warn), message => Log.Information(message));
+        _world = world;
+        _chat = new ChatCommandSender(Warn);
         var territories = DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();
         Zones.Name = id => territories.GetRowOrDefault(id)?.PlaceName.ValueNullable?.Name.ExtractText();
         var catalog = new HuntLogCatalog(DataManager);
@@ -87,9 +98,14 @@ public sealed class OrionPlugin : IDalamudPlugin
             () => ObjectTable.LocalPlayer?.Level ?? 0, () => _hunt.IsRunning, MissingTravelPlugin, Say);
 
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);
+        // A run that reached its goal sends the character home, if a home is chosen. The hunt log
+        // run fills its targets through farm mode, so a farm ending inside one is not the run ending.
+        _farm.Ended += completed => { if (completed && !_hunt.IsRunning) QueueHome(); };
+        _hunt.Ended += completed => { if (completed) QueueHome(); };
+
         // The chocobo companion, kept out while a run is going (and only then: a green is half an hour).
         _chocobo = new ChocoboKeeper(
-            world, () => _config.KeepChocoboOut && (_farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning), ChocoboUnlocked);
+            world, () => _config.KeepChocoboOut && RunGoing, ChocoboUnlocked);
 
         // What this character is doing goes out on Daedalus's LAN bridge, and what the others' Orions
         // send comes back in for the main window's fleet list.
@@ -104,7 +120,8 @@ public sealed class OrionPlugin : IDalamudPlugin
             _farm, _hunt, _trophy, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
             () => nav.IsAvailable, huntLogPanel, _fleet, world, _config, SaveConfig, _settingsWindow.Toggle);
 
-        _ipc = new OrionIpc(PluginInterface, () => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning);
+        // A trip home still to be sent counts: Daedalus should finish the last fight before it goes.
+        _ipc = new OrionIpc(PluginInterface, () => RunGoing || _homeCommand is not null);
 
         _windowSystem.AddWindow(_mainWindow);
         _windowSystem.AddWindow(_settingsWindow);
@@ -161,6 +178,50 @@ public sealed class OrionPlugin : IDalamudPlugin
         _farm.Update();
         _chocobo.Tick();
         _fleet.Tick();
+        TickHome();
+    }
+
+    /// <summary>A farm run, a hunt log run, or Trophy Hunt on its way to the mobs.</summary>
+    private bool RunGoing => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
+
+    /// <summary>A run completed: line up the trip home the settings name, if any.</summary>
+    private void QueueHome()
+    {
+        var home = _config.AfterRun;
+        if (RunHomeCommands.For(home) is not { } command)
+            return;
+        if (RunHomeCommands.NeedsLifestream(home) && !PluginLoaded("Lifestream"))
+        {
+            Say($"Run complete, but Lifestream is not loaded, so \"{RunHomeCommands.Label(home)}\" cannot be reached. Staying here.");
+            return;
+        }
+        _homeCommand = command;
+        _homeQueuedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>Sends the queued trip home once the character can act: the last fight over, no cutscene, not mid-cast.</summary>
+    private void TickHome()
+    {
+        if (_homeCommand is not { } command)
+            return;
+
+        // Something was started again before it went: that run decides where the character is.
+        if (RunGoing)
+        {
+            _homeCommand = null;
+            return;
+        }
+        if (_world.IsReady && !_world.IsOccupied && !_world.InCombat)
+        {
+            _homeCommand = null;
+            Say($"Run complete: heading home ({RunHomeCommands.Label(_config.AfterRun)}).");
+            _chat.Send(command);
+        }
+        else if (DateTime.UtcNow - _homeQueuedAt > HomeGiveUp)
+        {
+            _homeCommand = null;
+            Say("Run complete, but the character was not free to head home in two minutes. Staying here.");
+        }
     }
 
     /// <summary>This character's line for the fleet, or null when there is no character to speak for.</summary>
@@ -222,6 +283,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     /// <summary>The hunt log run owns the farm while it is going, so it is the one to stop.</summary>
     private void StopAll(string reason)
     {
+        _homeCommand = null;
         if (_hunt.IsRunning)
             _hunt.Stop(reason);
         else if (_trophy.IsRunning)
@@ -239,10 +301,22 @@ public sealed class OrionPlugin : IDalamudPlugin
     {
         foreach (var name in new[] { "Lifestream", "Ariadne" })
         {
-            if (!PluginInterface.InstalledPlugins.Any(p => p.IsLoaded && string.Equals(p.InternalName, name, StringComparison.OrdinalIgnoreCase)))
+            if (!PluginLoaded(name))
                 return name;
         }
         return null;
+    }
+
+    private static bool PluginLoaded(string internalName)
+    {
+        try
+        {
+            return PluginInterface.InstalledPlugins.Any(p => p.IsLoaded && string.Equals(p.InternalName, internalName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

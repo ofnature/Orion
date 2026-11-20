@@ -5,6 +5,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Orion.Config;
 using Orion.Services.Farm;
+using Orion.Services.Game;
 
 namespace Orion.Windows;
 
@@ -29,7 +30,7 @@ public sealed class SettingsWindow : Window
         _saveConfiguration = saveConfiguration;
         _mountHelper = mountHelper;
 
-        Size = new Vector2(420, 420);
+        Size = new Vector2(440, 520);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
@@ -117,6 +118,24 @@ public sealed class SettingsWindow : Window
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("How far around the character to look for the listed mobs.\nMobs must still be inside the spot leash.");
+
+        Styling.VSpace(6f);
+        Styling.SectionLabel("When a run completes");
+        ImGui.SetNextItemWidth(260);
+        if (ImGui.BeginCombo("##orionAfterRun", RunHomeCommands.Label(_configuration.AfterRun)))
+        {
+            foreach (var home in Enum.GetValues<RunHome>())
+            {
+                if (ImGui.Selectable(RunHomeCommands.Label(home), home == _configuration.AfterRun))
+                {
+                    _configuration.AfterRun = home;
+                    changed = true;
+                }
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.TextColored(Styling.TextDim, "Only after a run that reached its goal, never one you stopped or that failed.");
+        ImGui.TextColored(Styling.TextDim, "Return uses the Return action; the others are Lifestream's trips.");
 
         Styling.VSpace(6f);
         Styling.SectionLabel("Edge tab");

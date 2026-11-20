@@ -41,6 +41,9 @@ public sealed class OrionConfig : IPluginConfiguration
     /// </summary>
     public bool KeepChocoboOut { get; set; }
 
+    /// <summary>Where the character goes when a run completes on its own (not when it is stopped or fails).</summary>
+    public Services.Game.RunHome AfterRun { get; set; } = Services.Game.RunHome.Stay;
+
     /// <summary>Show Orion's tab on the screen-edge dock shared with the rest of the suite.</summary>
     public bool EdgeDockEnabled { get; set; } = true;
 

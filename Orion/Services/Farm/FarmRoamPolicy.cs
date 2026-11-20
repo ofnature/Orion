@@ -42,6 +42,15 @@ public static class FarmRoamPolicy
     public static int NextSpotIndex(int current, int spotCount)
         => spotCount <= 0 ? 0 : (current + 1) % spotCount;
 
+    /// <summary>
+    /// Whether a target that is no longer a live target was a kill. Still in the object table, it
+    /// is one when it is dead (the body lingers a few seconds, long enough for the next poll). Gone
+    /// from the table altogether, only when it had been fought: a mob that was merely targeted and
+    /// then left, or a target that never took, is not a kill.
+    /// </summary>
+    public static bool CountsAsKill(bool stillInTable, bool dead, bool fought)
+        => stillInTable ? dead : fought;
+
     public static bool IsComplete(uint itemCount, int targetCount)
         => targetCount > 0 && itemCount >= (uint)targetCount;
 

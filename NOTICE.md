@@ -37,7 +37,8 @@ IPC clients, and their tests) was copied from Demeter (`ofnature/Demeter`, v0.1.
 
 The fleet list (`Orion/Services/Fleet`, `Orion/Services/Ipc/RelayIpc.cs`, and their tests) was
 copied from Odysseus (`ofnature/Odysseus`), with Orion's own status record. It rides Daedalus's
-LAN relay (`Daedalus.Relay.Publish` / `Daedalus.Relay.Message`).
+LAN relay (`Daedalus.Relay.Publish` / `Daedalus.Relay.Message`). The chocobo keeper
+(`Orion/Services/Game/ChocoboKeeper.cs` and its tests) is Odysseus's too.
 
 ### Parcae (AGPL-3.0)
 

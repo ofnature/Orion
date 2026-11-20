@@ -44,6 +44,9 @@ public sealed class FarmModeService : IDisposable
     private DateTime _arrivedAtSpotUtc;
     private DateTime _lastProgressUtc;
     private ulong _lastEngagedTargetId;
+
+    /// <summary>The engaged target turned on us or took damage: a fight, not just a target.</summary>
+    private bool _foughtEngaged;
     private ulong _approachTargetId;
     private DateTime? _atTagRangeSinceUtc;
 
@@ -117,6 +120,7 @@ public sealed class FarmModeService : IDisposable
         _atSpot = false;
         Kills = 0;
         _lastEngagedTargetId = 0;
+        _foughtEngaged = false;
         _lastProgressUtc = DateTime.UtcNow;
         _mountCastRequestedUtc = null;
         _mountCastRetried = false;
@@ -206,18 +210,29 @@ public sealed class FarmModeService : IDisposable
         // The farm set this target itself; a live, targetable BattleNpc is enough to walk to.
         if (_targetManager.Target is Dalamud.Game.ClientState.Objects.Types.IBattleNpc { IsDead: false, IsTargetable: true } target)
         {
+            if (target.GameObjectId != _lastEngagedTargetId)
+                _foughtEngaged = false;
             _lastEngagedTargetId = target.GameObjectId;
+            if (target.TargetObjectId == player.GameObjectId || target.CurrentHp < target.MaxHp)
+                _foughtEngaged = true;
             _lastProgressUtc = DateTime.UtcNow;
             ApproachTarget(player, target);
             return;
         }
 
-        // Target just went away after we were engaging — count the kill.
+        // The target we took is no longer a live target. That is a kill only when the mob is dead:
+        // a target that never took, was dropped by something else, or wandered off is not one.
+        // (Counting every lost target ran the counter up with no mob in reach, 2026-11-19.)
         if (_lastEngagedTargetId != 0)
         {
-            Kills++;
+            var mob = _objectTable.SearchById(_lastEngagedTargetId) as Dalamud.Game.ClientState.Objects.Types.IBattleNpc;
+            if (FarmRoamPolicy.CountsAsKill(mob != null, mob is { IsDead: true } or { CurrentHp: 0 }, _foughtEngaged))
+            {
+                Kills++;
+                _lastProgressUtc = DateTime.UtcNow;
+            }
             _lastEngagedTargetId = 0;
-            _lastProgressUtc = DateTime.UtcNow;
+            _foughtEngaged = false;
         }
 
         var spot = Profile.Spots[Math.Min(_spotIndex, Profile.Spots.Count - 1)];
@@ -233,10 +248,12 @@ public sealed class FarmModeService : IDisposable
         {
             _daedalus.RecordTargetWrite(candidate.GameObjectId);
             _targetManager.Target = candidate;
-            // Latch the kill at ACQUISITION: high-level toons one-shot farm mobs inside a single
+            // Remember the mob at ACQUISITION: high-level toons one-shot farm mobs inside a single
             // poll, so the "fighting" branch may never see the target alive — without this the
-            // kill counter reads 0 on every fast-kill run.
+            // kill counter reads 0 on every fast-kill run. Whether it counts is decided when the
+            // target is gone, by whether the mob is dead.
             _lastEngagedTargetId = candidate.GameObjectId;
+            _foughtEngaged = false;
             _flyFailedThisLeg = false; // new travel leg
             if (_vNav.IsPathRunning)
                 _vNav.Stop();

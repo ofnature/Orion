@@ -12,6 +12,7 @@ using Dalamud.Plugin.Services;
 using Orion.Config;
 using Orion.Services.Farm;
 using Orion.Services.Fleet;
+using Orion.Services.Game;
 using Orion.Services.HuntLog;
 using Orion.Windows.Components;
 using Orion.Windows.Sections;
@@ -39,6 +40,7 @@ public sealed class MainWindow : Window
     private readonly Func<bool> _navAvailable;
     private readonly HuntLogPanel _huntLog;
     private readonly FleetPublisher _fleet;
+    private readonly IChocoboWorld _chocobo;
     private readonly OrionConfig _config;
     private readonly Action _saveConfig;
     private readonly Action _toggleSettings;
@@ -81,6 +83,7 @@ public sealed class MainWindow : Window
         Func<bool> navAvailable,
         HuntLogPanel huntLog,
         FleetPublisher fleet,
+        IChocoboWorld chocobo,
         OrionConfig config,
         Action saveConfig,
         Action toggleSettings)
@@ -98,6 +101,7 @@ public sealed class MainWindow : Window
         _navAvailable = navAvailable;
         _huntLog = huntLog;
         _fleet = fleet;
+        _chocobo = chocobo;
         _config = config;
         _saveConfig = saveConfig;
         _toggleSettings = toggleSettings;
@@ -168,6 +172,42 @@ public sealed class MainWindow : Window
         Styling.VSpace(12f);
         Styling.SectionLabel("Fleet");
         DrawFleet();
+
+        Styling.VSpace(12f);
+        Styling.SectionLabel("Chocobo");
+        DrawChocobo();
+    }
+
+    /// <summary>The companion: whether it is out and for how long, the greens left, and the switch to keep it out.</summary>
+    private void DrawChocobo()
+    {
+        var left = _chocobo.CompanionTimeLeft;
+        if (left > 0f)
+            ImGui.TextColored(Styling.AccentMint, $"Out, {Math.Ceiling(left / 60f):F0} min left");
+        else
+            ImGui.TextColored(Styling.TextDim, "Not out");
+
+        ImGui.TextColored(GreensColor(out var greens), $"Gysahl Greens: {greens}");
+
+        var keep = _config.KeepChocoboOut;
+        if (ImGui.Checkbox("Keep it out", ref keep))
+        {
+            _config.KeepChocoboOut = keep;
+            _saveConfig();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "While a run is going, feeds it a Gysahl Green whenever the summon has under five minutes left.\n"
+                + "Only in the field, on foot and out of combat, and not until \"My Little Chocobo\" is done.");
+        }
+    }
+
+    /// <summary>Greens in the bags, and the colour to say it in: rose when there are none, amber when nearly out.</summary>
+    private System.Numerics.Vector4 GreensColor(out int greens)
+    {
+        greens = _chocobo.ItemCount(ChocoboKeeper.GysahlGreens);
+        return greens == 0 ? Styling.AccentRose : greens <= 2 ? Styling.AccentAmber : Styling.TextSecondary;
     }
 
     /// <summary>What the other characters' Orions say they are doing, as heard over Daedalus's LAN bridge.</summary>
@@ -276,6 +316,8 @@ public sealed class MainWindow : Window
         ImGui.SameLine();
         if (ImGui.SmallButton("Hunt log##dock"))
             ShowMode(OrionMode.HuntLog);
+        ImGui.SameLine();
+        ImGui.TextColored(GreensColor(out var greens), $"Greens: {greens}");
         ImGui.Separator();
 
         if (Busy)

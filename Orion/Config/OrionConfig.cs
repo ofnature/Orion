@@ -34,6 +34,13 @@ public sealed class OrionConfig : IPluginConfiguration
 
     public FarmConfig Farm { get; set; } = new();
 
+    /// <summary>
+    /// Keep the chocobo companion summoned while a run is going, feeding it a Gysahl Green whenever
+    /// the timer runs low. Does nothing until "My Little Chocobo" is done, and never spends a green
+    /// in a city or a duty, where the companion is not allowed anyway.
+    /// </summary>
+    public bool KeepChocoboOut { get; set; }
+
     /// <summary>Show Orion's tab on the screen-edge dock shared with the rest of the suite.</summary>
     public bool EdgeDockEnabled { get; set; } = true;
 

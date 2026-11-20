@@ -41,6 +41,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     private readonly FarmModeService _farm;
     private readonly HuntLogRunner _hunt;
     private readonly TrophyRunner _trophy;
+    private readonly ChocoboKeeper _chocobo;
     private readonly GarlandDropSource _dropSource;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
@@ -86,6 +87,10 @@ public sealed class OrionPlugin : IDalamudPlugin
             () => ObjectTable.LocalPlayer?.Level ?? 0, () => _hunt.IsRunning, MissingTravelPlugin, Say);
 
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);
+        // The chocobo companion, kept out while a run is going (and only then: a green is half an hour).
+        _chocobo = new ChocoboKeeper(
+            world, () => _config.KeepChocoboOut && (_farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning), ChocoboUnlocked);
+
         // What this character is doing goes out on Daedalus's LAN bridge, and what the others' Orions
         // send comes back in for the main window's fleet list.
         _fleet = new FleetPublisher(new RelayIpc(PluginInterface, Warn), FleetSnapshot, () => _config.ShareFleetStatus);
@@ -97,7 +102,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         var drops = new DropSources(DropSources.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), Warn);
         _mainWindow = new MainWindow(
             _farm, _hunt, _trophy, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
-            () => nav.IsAvailable, huntLogPanel, _fleet, _config, SaveConfig, _settingsWindow.Toggle);
+            () => nav.IsAvailable, huntLogPanel, _fleet, world, _config, SaveConfig, _settingsWindow.Toggle);
 
         _ipc = new OrionIpc(PluginInterface, () => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning);
 
@@ -154,6 +159,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _hunt.Tick();
         _trophy.Tick();
         _farm.Update();
+        _chocobo.Tick();
         _fleet.Tick();
     }
 
@@ -237,6 +243,23 @@ public sealed class OrionPlugin : IDalamudPlugin
                 return name;
         }
         return null;
+    }
+
+    /// <summary>
+    /// "My Little Chocobo" is three quests, one per Grand Company. Nothing to summon before one of
+    /// them is done, and which one depends on who the character signed with.
+    /// </summary>
+    private static bool ChocoboUnlocked()
+    {
+        try
+        {
+            var quest = ChocoboKeeper.UnlockQuestFor((byte)GrandCompany());
+            return quest != 0 && QuestManager.IsQuestComplete(quest);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>The Grand Company the character serves (1 to 3), 0 for none.</summary>

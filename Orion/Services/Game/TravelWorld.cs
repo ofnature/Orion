@@ -13,11 +13,13 @@ using Orion.Services.Travel;
 namespace Orion.Services.Game;
 
 /// <summary>
-/// What <see cref="Traveller"/> needs of the game, Ariadne and Lifestream. The travel half of
-/// Demeter's <c>GameBasics</c> (same author, both AGPL), copied without the gathering, gearset,
-/// bag and repair members. Decision-free: every judgement lives in <see cref="Traveller"/>.
+/// What <see cref="Traveller"/> needs of the game, Ariadne and Lifestream, and what
+/// <see cref="ChocoboKeeper"/> needs to keep the companion out. The travel half of Demeter's
+/// <c>GameBasics</c> (same author, both AGPL), copied without the gathering, gearset and repair
+/// members; the companion members are Odysseus's. Decision-free: every judgement lives in
+/// <see cref="Traveller"/> and <see cref="ChocoboKeeper"/>.
 /// </summary>
-public sealed unsafe class TravelWorld : ITravelWorld
+public sealed unsafe class TravelWorld : ITravelWorld, IChocoboWorld
 {
     /// <summary>GeneralAction 9 — Mount Roulette.</summary>
     private const uint MountRouletteGeneralAction = 9;
@@ -148,6 +150,69 @@ public sealed unsafe class TravelWorld : ITravelWorld
         catch (Exception ex)
         {
             _log($"{what} failed: {ex.Message}");
+        }
+    }
+
+    // ── Chocobo companion ──
+
+    /// <summary>Seconds the companion has left before it goes away; 0 when it is not out.</summary>
+    public float CompanionTimeLeft
+    {
+        get
+        {
+            try
+            {
+                var ui = UIState.Instance();
+                return ui == null ? 0f : ui->Buddy.CompanionInfo.TimeLeft;
+            }
+            catch
+            {
+                return 0f;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The field, not a city and not a duty: <see cref="CanMountHere"/> is false for exactly the
+    /// zones a companion is refused in. And on foot and out of a fight, since Orion spends much of a
+    /// run in the saddle or in combat, where the game refuses the green and a try is just an error
+    /// line every thirty seconds.
+    /// </summary>
+    public bool CanSummonHere
+        => CanMountHere && !IsMounted && !InCombat
+           && !_condition[ConditionFlag.BoundByDuty]
+           && !_condition[ConditionFlag.BoundByDuty56]
+           && !_condition[ConditionFlag.BoundByDuty95];
+
+    /// <summary>Normal-quality copies of an item in the bags.</summary>
+    public int ItemCount(uint itemId)
+    {
+        try
+        {
+            var manager = InventoryManager.Instance();
+            return manager == null ? 0 : Math.Max(0, manager->GetInventoryItemCount(itemId, false));
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>Use an inventory item, as clicking it in the bag does.</summary>
+    public bool UseItem(uint itemId)
+    {
+        try
+        {
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentInventoryContext.Instance();
+            if (agent == null)
+                return false;
+            agent->UseItem(itemId, InventoryType.Invalid, 0, 0);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log($"UseItem {itemId} failed: {ex.Message}");
+            return false;
         }
     }
 

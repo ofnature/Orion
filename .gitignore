@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# Markdown stays local (working notes). Only the README and the NOTICE (third-party attribution)
+# are published.
+*.md
+!README.md
+!NOTICE.md

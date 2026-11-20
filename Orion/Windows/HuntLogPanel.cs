@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
-using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using Orion.Services.Farm;
 using Orion.Services.HuntLog;
@@ -12,11 +11,11 @@ using Orion.Windows.Components;
 namespace Orion.Windows;
 
 /// <summary>
-/// The hunt log's current rank: what it still wants, how many, and where the log says to look.
-/// START runs the whole rank unattended; "Farm this" hands one target to the main window's farm,
-/// which then ends when the target is filled.
+/// The main window's Hunt Log mode: the current rank, what it still wants, how many, and where
+/// the log says to look. START runs the whole rank unattended; "Farm this" hands one target to
+/// Trophy Hunt, which then ends when the target is filled.
 /// </summary>
-public sealed class HuntLogWindow : Window
+public sealed class HuntLogPanel
 {
     private readonly HuntLogCatalog _catalog;
     private readonly HuntLogProgress _progress;
@@ -25,14 +24,15 @@ public sealed class HuntLogWindow : Window
     private readonly FarmModeService _farm;
     private readonly IObjectTable _objectTable;
     private readonly IClientState _clientState;
-    private readonly Action _openMain;
+    private readonly Action _showTrophyHunt;
 
     private HuntLogBook? _book;
     private int _shownRank = -1;
     private IReadOnlyList<HuntLogTarget> _targets = [];
     private string? _startError;
 
-    public HuntLogWindow(
+    /// <param name="showTrophyHunt">Switch the main window to Trophy Hunt, where a hand-picked target gets its spot.</param>
+    public HuntLogPanel(
         HuntLogCatalog catalog,
         HuntLogProgress progress,
         HuntPositions positions,
@@ -40,8 +40,7 @@ public sealed class HuntLogWindow : Window
         FarmModeService farm,
         IObjectTable objectTable,
         IClientState clientState,
-        Action openMain)
-        : base("Orion — Hunt Log###OrionHuntLog")
+        Action showTrophyHunt)
     {
         _catalog = catalog;
         _progress = progress;
@@ -50,16 +49,11 @@ public sealed class HuntLogWindow : Window
         _farm = farm;
         _objectTable = objectTable;
         _clientState = clientState;
-        _openMain = openMain;
-
-        Size = new Vector2(680, 560);
-        SizeCondition = ImGuiCond.FirstUseEver;
+        _showTrophyHunt = showTrophyHunt;
     }
 
-    public override void Draw()
+    public void Draw()
     {
-        using var style = Styling.PushWindowStyle();
-
         // Opens on the log of the class being played; a job without one (or none read yet) gets the first.
         _book ??= _catalog.BookForClassJob(_objectTable.LocalPlayer?.ClassJob.RowId ?? 0)
                   ?? (_catalog.Books.Count > 0 ? _catalog.Books[0] : null);
@@ -162,7 +156,7 @@ public sealed class HuntLogWindow : Window
                     profile.ClearMobs();
                     profile.AddMob(target.NameId, target.MobName);
                     profile.Hunt = target;
-                    _openMain();
+                    _showTrophyHunt();
                 }
                 ImGui.EndDisabled();
             }
@@ -188,6 +182,6 @@ public sealed class HuntLogWindow : Window
 
         Styling.VSpace(4f);
         ImGui.TextColored(Styling.TextDim, "START travels to each mob and kills what the rank still wants, one target after another.");
-        ImGui.TextColored(Styling.TextDim, "\"Farm this\" is the manual way: stand by the mobs, press it, then mark a spot in the main window.");
+        ImGui.TextColored(Styling.TextDim, "\"Farm this\" is the manual way: stand by the mobs, press it, then mark a spot in Trophy Hunt.");
     }
 }

@@ -9,6 +9,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Orion.Config;
 using Orion.Services.Farm;
+using Orion.Services.Fleet;
 using Orion.Services.Game;
 using Orion.Services.HuntLog;
 using Orion.Services.Ipc;
@@ -42,7 +43,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     private readonly GarlandDropSource _dropSource;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
-    private readonly HuntLogWindow _huntLogWindow;
+    private readonly FleetPublisher _fleet;
     private readonly SettingsWindow _settingsWindow;
     private readonly EdgeDockWindow _edgeDock;
 
@@ -79,15 +80,20 @@ public sealed class OrionPlugin : IDalamudPlugin
             () => ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0, GrandCompany, MissingTravelPlugin, Say);
 
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);
-        _huntLogWindow = new HuntLogWindow(catalog, huntProgress, positions, _hunt, _farm, ObjectTable, ClientState, OpenMain);
+        // What this character is doing goes out on Daedalus's LAN bridge, and what the others' Orions
+        // send comes back in for the main window's fleet list.
+        _fleet = new FleetPublisher(new RelayIpc(PluginInterface, Warn), FleetSnapshot, () => _config.ShareFleetStatus);
+
+        var huntLogPanel = new HuntLogPanel(
+            catalog, huntProgress, positions, _hunt, _farm, ObjectTable, ClientState,
+            () => _mainWindow!.ShowMode(OrionMode.TrophyHunt));
         _mainWindow = new MainWindow(
             _farm, _hunt, _dropSource, DataManager, TargetManager, ClientState, ObjectTable,
-            () => nav.IsAvailable, _huntLogWindow.Toggle, _settingsWindow.Toggle);
+            () => nav.IsAvailable, huntLogPanel, _fleet, _config, SaveConfig, _settingsWindow.Toggle);
 
         _ipc = new OrionIpc(PluginInterface, () => _farm.IsRunning || _hunt.IsRunning);
 
         _windowSystem.AddWindow(_mainWindow);
-        _windowSystem.AddWindow(_huntLogWindow);
         _windowSystem.AddWindow(_settingsWindow);
 
         // Orion's tab on the screen edge, stacked with the rest of the suite's. Any edge, any spot along it.
@@ -126,6 +132,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
         _edgeDock.Dispose();
         _ipc.Dispose();
+        _fleet.Dispose();
         _hunt.Dispose();
         _farm.Notify -= Say;
         _farm.Dispose();
@@ -137,6 +144,41 @@ public sealed class OrionPlugin : IDalamudPlugin
     {
         _hunt.Tick();
         _farm.Update();
+        _fleet.Tick();
+    }
+
+    /// <summary>This character's line for the fleet, or null when there is no character to speak for.</summary>
+    private FleetStatus? FleetSnapshot()
+    {
+        if (ObjectTable.LocalPlayer is not { } player)
+            return null;
+
+        var name = player.Name.TextValue;
+        var world = player.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty;
+        var profile = _farm.Profile;
+        var running = _farm.IsRunning || _hunt.IsRunning;
+
+        var progress = string.Empty;
+        if (_farm.IsRunning)
+        {
+            progress = profile.Hunt is { } hunt
+                ? $"{hunt.Needed - _farm.HuntKillsLeft} / {hunt.Needed}"
+                : $"{_farm.PeekItemCount(profile.ItemId)} / {profile.TargetCount}";
+        }
+
+        return new FleetStatus
+        {
+            SenderId = $"{name}@{world}",
+            Character = name,
+            World = world,
+            Running = running,
+            Mode = !running ? string.Empty : _hunt.IsRunning ? ModeNames.HuntLog : ModeNames.TrophyHunt,
+            Goal = !_farm.IsRunning ? string.Empty : profile.Hunt?.MobName ?? profile.ItemName,
+            Progress = progress,
+            StatusLine = _hunt.IsRunning ? _hunt.StatusLine : _farm.IsRunning ? _farm.StatusLine : string.Empty,
+            Zone = Zones.Name?.Invoke(ClientState.TerritoryType) ?? string.Empty,
+            SentUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        };
     }
 
     private void OnCommand(string command, string args)
@@ -147,7 +189,7 @@ public sealed class OrionPlugin : IDalamudPlugin
                 StopAll("stopped by command");
                 break;
             case "log":
-                _huntLogWindow.IsOpen = true;
+                _mainWindow.ShowMode(OrionMode.HuntLog);
                 break;
             default:
                 OpenMain();

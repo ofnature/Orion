@@ -29,7 +29,7 @@ public sealed class SettingsWindow : Window
         _saveConfiguration = saveConfiguration;
         _mountHelper = mountHelper;
 
-        Size = new Vector2(400, 340);
+        Size = new Vector2(420, 420);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
@@ -127,6 +127,16 @@ public sealed class SettingsWindow : Window
             changed = true;
         }
         ImGui.TextColored(Styling.TextDim, "Point at the tab for the panel, click to pin it, drag it to move it.");
+
+        Styling.VSpace(6f);
+        Styling.SectionLabel("Fleet");
+        var share = _configuration.ShareFleetStatus;
+        if (ImGui.Checkbox("Tell the other characters what this one is doing", ref share))
+        {
+            _configuration.ShareFleetStatus = share;
+            changed = true;
+        }
+        ImGui.TextColored(Styling.TextDim, "Sent over Daedalus's LAN bridge. What the others send is shown either way.");
 
         if (changed)
             _saveConfiguration();

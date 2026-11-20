@@ -27,10 +27,16 @@ copy for now.
 Travel (`Orion/Services/Travel`, `Orion/Services/Game/TravelWorld.cs`, the Ariadne and Lifestream
 IPC clients, and their tests) was copied from Demeter (`ofnature/Demeter`, v0.1.4).
 
+### Odysseus (same author, AGPL-3.0)
+
+The fleet list (`Orion/Services/Fleet`, `Orion/Services/Ipc/RelayIpc.cs`, and their tests) was
+copied from Odysseus (`ofnature/Odysseus`), with Orion's own status record. It rides Daedalus's
+LAN relay (`Daedalus.Relay.Publish` / `Daedalus.Relay.Message`).
+
 ### Parcae (AGPL-3.0)
 
-The window styling, the step header, stat tile and hero button components, and the edge dock
-(`Orion/Windows/Styling.cs`, `Orion/Windows/Components`, `Orion/Windows/Dock`,
+The window styling, the step header, stat tile, hero button and sidebar tab components, and the
+edge dock (`Orion/Windows/Styling.cs`, `Orion/Windows/Components`, `Orion/Windows/Dock`,
 `Orion/Windows/EdgeDockWindow.cs`) were copied from Parcae, and the header banner is adapted from
 its. Parcae is derived from FFXIV-AutoFATEGrind:
 

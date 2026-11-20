@@ -5,9 +5,13 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using Orion.Config;
 using Orion.Services.Farm;
+using Orion.Services.Fleet;
 using Orion.Services.HuntLog;
 using Orion.Windows.Components;
 using Orion.Windows.Sections;
@@ -15,9 +19,11 @@ using Orion.Windows.Sections;
 namespace Orion.Windows;
 
 /// <summary>
-/// Farm setup and control, laid out the way Parcae's main window is: the header banner, then a
-/// numbered idle flow ending in START, or the running dashboard with STOP. The working profile is
-/// session-only by design (Daedalus's docs/farm-mode.md); travel settings live in the settings window.
+/// Orion's window, laid out the way Parcae's are: the header banner, a strip on the left to pick
+/// the mode (and see what the other characters' Orions are doing), and the mode beside it.
+/// Trophy Hunt is farm mode: a numbered idle flow ending in START, or the running dashboard with
+/// STOP. Its working profile is session-only by design (Daedalus's docs/farm-mode.md); travel
+/// settings live in the settings window. Hunt Log is <see cref="HuntLogPanel"/>.
 /// </summary>
 public sealed class MainWindow : Window
 {
@@ -29,8 +35,14 @@ public sealed class MainWindow : Window
     private readonly IClientState _clientState;
     private readonly IObjectTable _objectTable;
     private readonly Func<bool> _navAvailable;
-    private readonly Action _toggleHuntLog;
+    private readonly HuntLogPanel _huntLog;
+    private readonly FleetPublisher _fleet;
+    private readonly OrionConfig _config;
+    private readonly Action _saveConfig;
     private readonly Action _toggleSettings;
+
+    /// <summary>A peer unheard for this long is drawn as stale (it publishes every two seconds).</summary>
+    private static readonly TimeSpan FleetStaleAfter = TimeSpan.FromSeconds(10);
 
     private string _itemSearch = "";
     private string _lastItemSearch = "";
@@ -54,7 +66,10 @@ public sealed class MainWindow : Window
         IClientState clientState,
         IObjectTable objectTable,
         Func<bool> navAvailable,
-        Action toggleHuntLog,
+        HuntLogPanel huntLog,
+        FleetPublisher fleet,
+        OrionConfig config,
+        Action saveConfig,
         Action toggleSettings)
         : base("Orion — Hunt Operations###OrionMain")
     {
@@ -66,10 +81,13 @@ public sealed class MainWindow : Window
         _clientState = clientState;
         _objectTable = objectTable;
         _navAvailable = navAvailable;
-        _toggleHuntLog = toggleHuntLog;
+        _huntLog = huntLog;
+        _fleet = fleet;
+        _config = config;
+        _saveConfig = saveConfig;
         _toggleSettings = toggleSettings;
 
-        Size = new Vector2(520, 720);
+        Size = new Vector2(760, 720);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
@@ -86,15 +104,95 @@ public sealed class MainWindow : Window
 
         OrionHeader.Draw(status, detail, accent,
         [
-            new HeaderAction(FontAwesomeIcon.Book, "huntlog", "Hunt log", _toggleHuntLog),
             new HeaderAction(FontAwesomeIcon.Cog, "settings", "Settings", _toggleSettings),
         ]);
         Styling.VSpace(7f);
 
-        if (Busy)
-            DrawRunning();
-        else
-            DrawIdle();
+        var sidebarWidth = 168f * ImGuiHelpers.GlobalScale;
+        using (ImRaii.Child("##orion_sidebar", new Vector2(sidebarWidth, -1), border: false))
+            DrawSidebar();
+
+        ImGui.SameLine();
+
+        using (ImRaii.Child("##orion_content", new Vector2(-1, -1), border: false))
+        {
+            if (_config.Mode == OrionMode.HuntLog)
+                _huntLog.Draw();
+            else if (Busy)
+                DrawRunning();
+            else
+                DrawIdle();
+        }
+    }
+
+    /// <summary>Open the window on a mode (the hunt log command, the dock panel, "Farm this").</summary>
+    public void ShowMode(OrionMode mode)
+    {
+        SetMode(mode);
+        IsOpen = true;
+    }
+
+    private void SetMode(OrionMode mode)
+    {
+        if (_config.Mode == mode)
+            return;
+        _config.Mode = mode;
+        _saveConfig();
+    }
+
+    // ----- Left strip: modes, then the fleet -----
+
+    private void DrawSidebar()
+    {
+        ImGui.Spacing();
+        if (SidebarTab.Draw(ModeNames.HuntLog, FontAwesomeIcon.Book, Styling.AccentViolet, _config.Mode == OrionMode.HuntLog))
+            SetMode(OrionMode.HuntLog);
+        if (SidebarTab.Draw(ModeNames.TrophyHunt, FontAwesomeIcon.Crosshairs, Styling.AccentViolet, _config.Mode == OrionMode.TrophyHunt))
+            SetMode(OrionMode.TrophyHunt);
+
+        Styling.VSpace(12f);
+        Styling.SectionLabel("Fleet");
+        DrawFleet();
+    }
+
+    /// <summary>What the other characters' Orions say they are doing, as heard over Daedalus's LAN bridge.</summary>
+    private void DrawFleet()
+    {
+        var peers = _fleet.Roster.Peers(DateTime.UtcNow, FleetStaleAfter);
+        if (peers.Count == 0)
+        {
+            using (ImRaii.PushColor(ImGuiCol.Text, Styling.TextMuted))
+                ImGui.TextWrapped("No other Orion heard on the LAN bridge.");
+            return;
+        }
+
+        foreach (var peer in peers)
+        {
+            var status = peer.Status;
+            var online = peer.Liveness == PeerLiveness.Online;
+            var dot = !online ? Styling.TextMuted : status.Running ? Styling.AccentMint : Styling.TextDim;
+            var line = !online ? "not heard lately"
+                : !status.Running ? "idle"
+                : status.Progress.Length > 0 ? $"{status.Goal} {status.Progress}"
+                : status.Mode;
+
+            ImGui.BeginGroup();
+            ImGui.TextColored(dot, "●");
+            ImGui.SameLine(0, 6f);
+            ImGui.TextColored(online ? Styling.TextStrong : Styling.TextMuted, status.Character);
+            ImGui.TextColored(Styling.TextDim, line);
+            ImGui.EndGroup();
+
+            if (ImGui.IsItemHovered())
+            {
+                var what = status.Running ? $"{status.Mode}: {status.Goal} {status.Progress}".TrimEnd() : "Idle";
+                ImGui.SetTooltip(
+                    $"{status.Character} @ {status.World}\n{status.Zone}\n{what}"
+                    + (status.StatusLine.Length > 0 ? $"\n{status.StatusLine}" : "")
+                    + $"\nheard {peer.Age.TotalSeconds:F0}s ago");
+            }
+            Styling.VSpace(2f);
+        }
     }
 
     /// <summary>A farm run, or a hunt log run (which is between farms while it travels).</summary>
@@ -123,7 +221,7 @@ public sealed class MainWindow : Window
             IsOpen = true;
         ImGui.SameLine();
         if (ImGui.SmallButton("Hunt log##dock"))
-            _toggleHuntLog();
+            ShowMode(OrionMode.HuntLog);
         ImGui.Separator();
 
         if (Busy)
@@ -298,7 +396,7 @@ public sealed class MainWindow : Window
 
         ImGui.SameLine();
         if (ImGui.SmallButton("or pick from the hunt log"))
-            _toggleHuntLog();
+            SetMode(OrionMode.HuntLog);
     }
 
     private void DrawMobs(FarmProfile profile)

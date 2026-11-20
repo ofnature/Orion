@@ -10,6 +10,12 @@ namespace Orion.Config;
 /// </summary>
 public sealed class FarmConfig
 {
+    /// <summary>
+    /// The item search lists only items a mob is known to drop (Teamcraft's list). Off, it lists
+    /// every item: the list is not complete.
+    /// </summary>
+    public bool DroppedItemsOnly { get; set; } = true;
+
     /// <summary>How far from the active spot mobs may be pulled (yalms).</summary>
     public float DefaultLeashRadiusYalms { get; set; } = 60f;
 

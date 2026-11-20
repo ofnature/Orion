@@ -8,9 +8,9 @@ namespace Orion.Services.HuntLog;
 
 /// <summary>
 /// Works through the current rank of one hunt log on its own: picks a target that still wants
-/// kills, travels to a zone it has been seen in (Lifestream into the zone, Ariadne to the spot),
-/// hands the killing to farm mode with that target as its goal, and moves on when it is filled.
-/// A rank that finishes rolls into the next one.
+/// kills, travels to a zone it has been seen in (<see cref="SpotTravel"/>: Lifestream into the
+/// zone, Ariadne to the spot), hands the killing to farm mode with that target as its goal, and
+/// moves on when it is filled. A rank that finishes rolls into the next one.
 ///
 /// <para>
 /// A target is skipped, with the reason said in chat, when nothing is recorded for it (dungeon
@@ -20,33 +20,20 @@ namespace Orion.Services.HuntLog;
 /// </summary>
 public sealed class HuntLogRunner : IDisposable
 {
-    private enum Phase { Idle, EnteringZone, FindingGround, GoingToSpot, Farming, Settling }
+    private enum Phase { Idle, Travelling, Farming, Settling }
 
     /// <summary>No kill on a target for this long: its spots are wrong, empty or contested. Move on.</summary>
     public static readonly TimeSpan StallAfter = TimeSpan.FromMinutes(4);
 
-    /// <summary>A zone just loaded may not have its mesh yet.</summary>
-    private static readonly TimeSpan GroundWait = TimeSpan.FromSeconds(15);
-
     /// <summary>The game moves a log to its next rank a moment after the last kill.</summary>
     private static readonly TimeSpan RankSettle = TimeSpan.FromSeconds(5);
-
-    /// <summary>Spots handed to farm mode for one target: enough to roam, few enough to come back round.</summary>
-    private const int MaxSpots = 4;
-
-    /// <summary>How near the first spot the travel leg ends; farm mode walks the rest.</summary>
-    private const float SpotStopDistance = 15f;
-
-    /// <summary>Arriving in a zone means standing by its aetheryte.</summary>
-    private const float AetheryteStopDistance = 40f;
 
     private readonly HuntLogCatalog _catalog;
     private readonly HuntLogProgress _progress;
     private readonly HuntPositions _positions;
     private readonly FarmModeService _farm;
-    private readonly ITravel _travel;
+    private readonly SpotTravel _travel;
     private readonly ITravelWorld _world;
-    private readonly Func<float, float, Vector3?> _floorAt;
     private readonly Func<uint> _currentClassJob;
     private readonly Func<uint> _grandCompany;
     private readonly Func<string?> _missingPlugin;
@@ -59,7 +46,6 @@ public sealed class HuntLogRunner : IDisposable
     private HuntLogBook? _book;
     private int _rank;
     private HuntLeg? _leg;
-    private List<Vector3> _spots = new();
     private int _lastKills;
     private DateTime _lastKillAt;
     private int _filled;
@@ -78,9 +64,8 @@ public sealed class HuntLogRunner : IDisposable
         HuntLogProgress progress,
         HuntPositions positions,
         FarmModeService farm,
-        ITravel travel,
+        SpotTravel travel,
         ITravelWorld world,
-        Func<float, float, Vector3?> floorAt,
         Func<uint> currentClassJob,
         Func<uint> grandCompany,
         Func<string?> missingPlugin,
@@ -92,7 +77,6 @@ public sealed class HuntLogRunner : IDisposable
         _farm = farm;
         _travel = travel;
         _world = world;
-        _floorAt = floorAt;
         _currentClassJob = currentClassJob;
         _grandCompany = grandCompany;
         _missingPlugin = missingPlugin;
@@ -164,23 +148,7 @@ public sealed class HuntLogRunner : IDisposable
         var now = _world.UtcNow;
         switch (_phase)
         {
-            case Phase.EnteringZone:
-                switch (_travel.Tick())
-                {
-                    case TravelStatus.Done:
-                        Enter(Phase.FindingGround, now);
-                        break;
-                    case TravelStatus.Failed:
-                        Skip(_travel.FailReason);
-                        break;
-                }
-                break;
-
-            case Phase.FindingGround:
-                FindGround(now);
-                break;
-
-            case Phase.GoingToSpot:
+            case Phase.Travelling:
                 switch (_travel.Tick())
                 {
                     case TravelStatus.Done:
@@ -188,6 +156,9 @@ public sealed class HuntLogRunner : IDisposable
                         break;
                     case TravelStatus.Failed:
                         Skip(_travel.FailReason);
+                        break;
+                    default:
+                        StatusLine = _travel.StatusLine;
                         break;
                 }
                 break;
@@ -256,8 +227,7 @@ public sealed class HuntLogRunner : IDisposable
             return;
         }
 
-        var here = _world.TerritoryId;
-        var leg = HuntRoute.Next(candidates, here, territory => _world.RouteTo(territory, Vector3.Zero) is not null);
+        var leg = HuntRoute.Next(candidates, _world.TerritoryId, territory => _world.RouteTo(territory, Vector3.Zero) is not null);
         if (leg == null)
         {
             foreach (var candidate in candidates)
@@ -267,47 +237,9 @@ public sealed class HuntLogRunner : IDisposable
         }
 
         _leg = leg;
-        if (leg.Zone.TerritoryId == here)
-        {
-            Enter(Phase.FindingGround, now);
-            return;
-        }
-
-        // Another zone: its aetheryte first. The spots' heights can only be asked of that zone's mesh.
-        var first = leg.Zone.Spots[0];
-        var near = new Vector3(first.X, 0f, first.Y);
-        var arrival = _world.NearestAttunedAetheryte(leg.Zone.TerritoryId, near) is { } aetheryte
-            ? _world.AetherytePosition(aetheryte) ?? near
-            : near;
-        _travel.Begin(leg.Zone.TerritoryId, arrival, fly: false, land: false, AetheryteStopDistance);
-        StatusLine = $"Travelling to {Zones.Describe(leg.Zone.TerritoryId)} for {leg.Target.MobName}";
-        Enter(Phase.EnteringZone, now);
-    }
-
-    /// <summary>In the zone: ask the mesh for the floor under each recorded spot, then go to the first.</summary>
-    private void FindGround(DateTime now)
-    {
-        var leg = _leg!;
-        _spots = new List<Vector3>();
-        foreach (var spot in leg.Zone.Spots)
-        {
-            if (_floorAt(spot.X, spot.Y) is { } floor)
-                _spots.Add(floor);
-            if (_spots.Count == MaxSpots)
-                break;
-        }
-
-        if (_spots.Count == 0)
-        {
-            StatusLine = $"Finding the ground for {leg.Target.MobName}";
-            if (now - _phaseStart > GroundWait)
-                Skip("the navmesh has no floor at its recorded positions");
-            return;
-        }
-
-        _travel.Begin(leg.Zone.TerritoryId, _spots[0], fly: true, land: true, SpotStopDistance);
-        StatusLine = $"Going to {leg.Target.MobName}";
-        Enter(Phase.GoingToSpot, now);
+        _travel.Begin(leg.Zone, leg.Target.MobName);
+        StatusLine = _travel.StatusLine;
+        Enter(Phase.Travelling, now);
     }
 
     private void BeginFarm(DateTime now)
@@ -318,7 +250,7 @@ public sealed class HuntLogRunner : IDisposable
         profile.AddMob(leg.Target.NameId, leg.Target.MobName);
         profile.Hunt = leg.Target;
         profile.Spots.Clear();
-        profile.Spots.AddRange(_spots);
+        profile.Spots.AddRange(_travel.Spots);
         profile.TerritoryId = (ushort)leg.Zone.TerritoryId;
 
         if (_farm.Start() is { } error)

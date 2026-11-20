@@ -29,7 +29,9 @@ public sealed class MainWindow : Window
 {
     private readonly FarmModeService _farm;
     private readonly HuntLogRunner _hunt;
+    private readonly TrophyRunner _trophy;
     private readonly GarlandDropSource _dropSource;
+    private readonly DropSources _drops;
     private readonly IDataManager _dataManager;
     private readonly ITargetManager _targetManager;
     private readonly IClientState _clientState;
@@ -45,11 +47,20 @@ public sealed class MainWindow : Window
     private static readonly TimeSpan FleetStaleAfter = TimeSpan.FromSeconds(10);
 
     private string _itemSearch = "";
-    private string _lastItemSearch = "";
+
+    // What the result list was last built for; null forces a rebuild.
+    private string? _lastItemSearch;
+
+    // The dropped-items list with names, built once from the Item sheet and sorted by name.
+    private List<(uint Id, string Name)>? _droppedItems;
     private readonly List<(uint Id, string Name)> _itemResults = new();
     private int _targetCountInput = 1;
 
     private string? _startError;
+
+    // Where START would travel to when no spot is marked; asked once a second, not per frame.
+    private TrophyLeg? _plan;
+    private long? _planCheckedAt;
     private readonly Dictionary<ulong, string> _pendingLocations = new();
     private string _locationStatus = "";
 
@@ -60,7 +71,9 @@ public sealed class MainWindow : Window
     public MainWindow(
         FarmModeService farm,
         HuntLogRunner hunt,
+        TrophyRunner trophy,
         GarlandDropSource dropSource,
+        DropSources drops,
         IDataManager dataManager,
         ITargetManager targetManager,
         IClientState clientState,
@@ -75,7 +88,9 @@ public sealed class MainWindow : Window
     {
         _farm = farm;
         _hunt = hunt;
+        _trophy = trophy;
         _dropSource = dropSource;
+        _drops = drops;
         _dataManager = dataManager;
         _targetManager = targetManager;
         _clientState = clientState;
@@ -99,7 +114,7 @@ public sealed class MainWindow : Window
         var (status, detail, accent) = !_navOk
             ? ("SETUP", "Ariadne or vnavmesh required", Styling.AccentRose)
             : Busy
-                ? ("HUNTING", _hunt.IsRunning ? _hunt.StatusLine : _farm.StatusLine, Styling.AccentMint)
+                ? ("HUNTING", RunStatus, Styling.AccentMint)
                 : ("READY", "waiting for a quarry", Styling.AccentVioletSoft);
 
         OrionHeader.Draw(status, detail, accent,
@@ -196,7 +211,46 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>A farm run, or a hunt log run (which is between farms while it travels).</summary>
-    private bool Busy => _farm.IsRunning || _hunt.IsRunning;
+    private bool Busy => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
+
+    /// <summary>The status line of whichever run is driving the character.</summary>
+    private string RunStatus
+        => _trophy.IsRunning ? _trophy.StatusLine
+            : _hunt.IsRunning && !_farm.IsRunning ? _hunt.StatusLine
+            : _farm.StatusLine;
+
+    /// <summary>
+    /// Stop whatever is going. The hunt log run owns the farm while it is going, so it is the one
+    /// to stop; Trophy Hunt's travel has no farm yet.
+    /// </summary>
+    private void StopRun()
+    {
+        if (_hunt.IsRunning)
+            _hunt.Stop("stopped by user");
+        else if (_trophy.IsRunning)
+            _trophy.Stop("stopped by user");
+        else
+            _farm.Stop("stopped by user");
+    }
+
+    /// <summary>START: farm the marked spots, or with none marked, travel to the mobs first.</summary>
+    private void PressStart(FarmProfile profile)
+        => _startError = profile.Spots.Count > 0 ? _farm.Start() : _trophy.Start();
+
+    /// <summary>Where START would travel to for the mobs listed now; null when it would not.</summary>
+    private TrophyLeg? TravelPlan(FarmProfile profile)
+    {
+        if (profile.Hunt != null || profile.Mobs.Count == 0)
+            return null;
+
+        var now = Environment.TickCount64;
+        if (_planCheckedAt is not { } last || now - last >= 1000)
+        {
+            _plan = _trophy.Plan();
+            _planCheckedAt = now;
+        }
+        return _plan;
+    }
 
     private void RefreshNav()
     {
@@ -234,7 +288,7 @@ public sealed class MainWindow : Window
         var reason = BlockingReason(profile);
         ImGui.TextColored(Styling.TextSecondary, GoalSummary(profile) ?? "nothing set up");
         if (HeroButton.Draw(FontAwesomeIcon.Play, "START", null, Styling.AccentViolet, reason == null, reason))
-            _startError = _farm.Start();
+            PressStart(profile);
         if (_startError != null)
             ImGui.TextColored(Styling.AccentRose, _startError);
     }
@@ -245,14 +299,15 @@ public sealed class MainWindow : Window
     {
         var profile = _farm.Profile;
 
-        // A hunt log run on the road: farm mode has nothing to show until it reaches the mob.
+        // On the road (a hunt log run between targets, or Trophy Hunt on its way to the mobs):
+        // farm mode has nothing to show until it gets there.
         if (!_farm.IsRunning)
         {
-            Styling.SectionLabel($"{_hunt.Book?.Name} hunt log");
-            ImGui.TextColored(Styling.TextSecondary, _hunt.StatusLine);
+            Styling.SectionLabel(_trophy.IsRunning ? ModeNames.TrophyHunt : $"{_hunt.Book?.Name} hunt log");
+            ImGui.TextColored(Styling.TextSecondary, RunStatus);
             Styling.VSpace(4f);
             if (StopButton())
-                _hunt.Stop("stopped by user");
+                StopRun();
             return;
         }
         var spacing = ImGui.GetStyle().ItemSpacing.X;
@@ -277,13 +332,7 @@ public sealed class MainWindow : Window
         Styling.VSpace(4f);
 
         if (StopButton())
-        {
-            // The hunt log run owns the farm while it is going, so it is the one to stop.
-            if (_hunt.IsRunning)
-                _hunt.Stop("stopped by user");
-            else
-                _farm.Stop("stopped by user");
-        }
+            StopRun();
     }
 
     private bool StopButton()
@@ -310,7 +359,7 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         var reason = BlockingReason(profile);
         if (HeroButton.Draw(FontAwesomeIcon.Play, "START", GoalSummary(profile), Styling.AccentViolet, reason == null, reason))
-            _startError = _farm.Start();
+            PressStart(profile);
 
         if (_startError != null)
             ImGui.TextColored(Styling.AccentRose, _startError);
@@ -332,7 +381,8 @@ public sealed class MainWindow : Window
             return "pick an item or a hunt log target";
         if (profile.Mobs.Count == 0)
             return "list at least one mob";
-        if (profile.Spots.Count == 0)
+        // With no spot marked, START travels to the mobs itself when it knows where one lives.
+        if (profile.Spots.Count == 0 && TravelPlan(profile) == null)
             return "mark at least one spot";
         return null;
     }
@@ -364,14 +414,29 @@ public sealed class MainWindow : Window
             }
         }
 
+        var droppedOnly = _config.Farm.DroppedItemsOnly;
+        if (ImGui.Checkbox("dropped items only", ref droppedOnly))
+        {
+            _config.Farm.DroppedItemsOnly = droppedOnly;
+            _saveConfig();
+            _lastItemSearch = null;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("List only items a mob is known to drop (FFXIV Teamcraft's list).\nThe list is not complete: untick to search every item.");
+
         ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##orionItemSearch", "search item by name (3+ letters)...", ref _itemSearch, 64);
-        if (_itemSearch.Length >= 3 && _itemSearch != _lastItemSearch)
+        ImGui.InputTextWithHint("##orionItemSearch",
+            droppedOnly ? "search dropped items by name..." : "search item by name (3+ letters)...", ref _itemSearch, 64);
+
+        // Every item needs three letters to narrow it down. The dropped list is short enough to
+        // browse: it shows in full until an item is picked, and again while something is typed.
+        var wantList = droppedOnly ? _itemSearch.Length > 0 || profile.ItemId == 0 : _itemSearch.Length >= 3;
+        if (wantList && _itemSearch != _lastItemSearch)
         {
             _lastItemSearch = _itemSearch;
-            RebuildItemResults();
+            RebuildItemResults(droppedOnly);
         }
-        if (_itemSearch.Length >= 3 && _itemResults.Count > 0)
+        if (wantList && _itemResults.Count > 0)
         {
             if (ImGui.BeginListBox("##orionItemResults", new Vector2(-1, Math.Min(_itemResults.Count, 6) * ImGui.GetTextLineHeightWithSpacing())))
             {
@@ -382,7 +447,8 @@ public sealed class MainWindow : Window
                         profile.ItemId = id;
                         profile.ItemName = name;
                         _itemSearch = "";
-                        _lastItemSearch = "";
+                        _lastItemSearch = null;
+                        FillDroppers(profile, id);
                     }
                 }
                 ImGui.EndListBox();
@@ -483,6 +549,20 @@ public sealed class MainWindow : Window
     private void DrawSpots(FarmProfile profile)
     {
         ImGui.TextColored(Styling.TextDim, "Orion roams between the spots; the first is the anchor.");
+        if (profile.Spots.Count == 0)
+        {
+            if (TravelPlan(profile) is { } plan)
+            {
+                var level = plan.Zone.Level > 0 ? $", level {plan.Zone.Level}" : "";
+                var zone = Orion.Services.Travel.Zones.Name?.Invoke(plan.Zone.TerritoryId) ?? $"territory {plan.Zone.TerritoryId}";
+                ImGui.TextColored(Styling.AccentMint, $"None marked: START will travel to {zone} for {plan.Mob.Name}{level}");
+                ImGui.TextColored(Styling.AccentMint, "and mark the spots itself. Mark one here to farm where you stand instead.");
+            }
+            else if (profile.Hunt == null && profile.Mobs.Count > 0)
+            {
+                ImGui.TextColored(Styling.TextDim, "No recorded position for these mobs in a zone you can reach: go to them and mark a spot.");
+            }
+        }
         if (ImGui.Button("Add spot (my position)"))
         {
             var player = _objectTable.LocalPlayer;
@@ -574,12 +654,62 @@ public sealed class MainWindow : Window
             _pendingLocations.Remove(completed.Value);
     }
 
-    private void RebuildItemResults()
+    /// <summary>
+    /// A newly picked item brings its prey with it: the mob list becomes the item's known droppers
+    /// (the bundled Teamcraft list, so no lookup goes out). An item the list does not know leaves
+    /// the mob list as it was. Farm mode only ever fights the ones near a marked spot, so droppers
+    /// that live in other zones are harmless in the list.
+    /// </summary>
+    private void FillDroppers(FarmProfile profile, uint itemId)
+    {
+        var droppers = _drops.MobsFor(itemId);
+        if (droppers.Count == 0)
+            return;
+
+        // New prey: spots marked for the last item's mobs no longer mean anything.
+        var names = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
+        profile.ClearMobs();
+        profile.Spots.Clear();
+        _planCheckedAt = null;
+        foreach (var nameId in droppers)
+        {
+            var name = names?.GetRowOrDefault(nameId)?.Singular.ExtractText();
+            if (string.IsNullOrEmpty(name))
+                continue;
+            // Sheet names are lowercase ("ground squirrel").
+            profile.AddMob(nameId, char.IsLower(name[0]) ? char.ToUpperInvariant(name[0]) + name[1..] : name);
+        }
+        _locationStatus = $"{profile.Mobs.Count} dropper(s) listed for {profile.ItemName}. Remove any you do not want.";
+    }
+
+    private void RebuildItemResults(bool droppedOnly)
     {
         _itemResults.Clear();
         var sheet = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
         if (sheet == null)
             return;
+
+        if (droppedOnly)
+        {
+            if (_droppedItems == null)
+            {
+                _droppedItems = new List<(uint, string)>();
+                foreach (var id in _drops.ItemIds)
+                {
+                    var name = sheet.GetRowOrDefault(id)?.Name.ExtractText();
+                    if (!string.IsNullOrEmpty(name))
+                        _droppedItems.Add((id, name));
+                }
+                _droppedItems.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            foreach (var item in _droppedItems)
+            {
+                if (_itemSearch.Length == 0 || item.Name.Contains(_itemSearch, StringComparison.OrdinalIgnoreCase))
+                    _itemResults.Add(item);
+            }
+            return;
+        }
 
         foreach (var row in sheet)
         {

@@ -25,12 +25,14 @@ public sealed class HuntLogPanel
     private readonly IObjectTable _objectTable;
     private readonly IClientState _clientState;
     private readonly Action _showTrophyHunt;
+    private readonly Func<bool> _otherRunBusy;
 
     private HuntLogBook? _book;
     private int _shownRank = -1;
     private IReadOnlyList<HuntLogTarget> _targets = [];
     private string? _startError;
 
+    /// <param name="otherRunBusy">A Trophy Hunt run (farming, or on its way) has the character.</param>
     /// <param name="showTrophyHunt">Switch the main window to Trophy Hunt, where a hand-picked target gets its spot.</param>
     public HuntLogPanel(
         HuntLogCatalog catalog,
@@ -40,7 +42,8 @@ public sealed class HuntLogPanel
         FarmModeService farm,
         IObjectTable objectTable,
         IClientState clientState,
-        Action showTrophyHunt)
+        Action showTrophyHunt,
+        Func<bool> otherRunBusy)
     {
         _catalog = catalog;
         _progress = progress;
@@ -50,6 +53,7 @@ public sealed class HuntLogPanel
         _objectTable = objectTable;
         _clientState = clientState;
         _showTrophyHunt = showTrophyHunt;
+        _otherRunBusy = otherRunBusy;
     }
 
     public void Draw()
@@ -149,7 +153,7 @@ public sealed class HuntLogPanel
             ImGui.TableNextColumn();
             if (!done)
             {
-                ImGui.BeginDisabled(_farm.IsRunning || _runner.IsRunning);
+                ImGui.BeginDisabled(_otherRunBusy() || _runner.IsRunning);
                 if (ImGui.SmallButton($"Farm this##hunt{target.Entry}_{target.Slot}"))
                 {
                     var profile = _farm.Profile;
@@ -173,7 +177,7 @@ public sealed class HuntLogPanel
         }
         else
         {
-            var blocked = _farm.IsRunning ? "a farm run is going" : null;
+            var blocked = _otherRunBusy() ? "a Trophy Hunt run is going" : null;
             if (HeroButton.Draw(FontAwesomeIcon.Play, "START", $"run {book.Name}, rank {rank + 1}", Styling.AccentViolet, blocked == null, blocked))
                 _startError = _runner.Start(book);
             if (_startError != null)

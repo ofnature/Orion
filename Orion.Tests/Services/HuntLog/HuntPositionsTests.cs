@@ -11,7 +11,7 @@ public sealed class HuntPositionsTests
           "imported": "2026-11-19",
           "format": "mobs[BNpcName id] = [[Map id, map x, map y, reports], ...]",
           "mobs": {
-            "49": [[15, 23.8, 22.98, 5], [15, 22.02, 23.35, 4], [20, 28.66, 24.0, 7]],
+            "49": [[15, 23.8, 22.98, 5], [15, 22.02, 23.35, 4], [20, 28.66, 24.0, 7, 3]],
             "262": [[21, 23.3, 34, 2]],
             "bad": [[1, 2, 3, 4]],
             "7": [[1, 2]]
@@ -28,6 +28,8 @@ public sealed class HuntPositionsTests
         Assert.Equal(3, ladybug.Count);
         Assert.Equal(new RecordedSpot(15, 23.8f, 22.98f, 5), ladybug[0]);
         Assert.Equal(20u, ladybug[2].MapId);
+        Assert.Equal(3, ladybug[2].Level);  // the fifth column, where the file has one
+        Assert.Equal(0, ladybug[0].Level);  // and 0 where it does not
         Assert.Equal(34f, mobs[262][0].MapY); // a whole number in the file is still a coordinate
     }
 
@@ -48,9 +50,12 @@ public sealed class HuntPositionsTests
 
         var mobs = HuntPositions.Parse(File.ReadAllText(path));
 
-        // 284 of the hunt log's 362 mobs had non-FATE reports when this was imported (2026-11-19).
-        Assert.True(mobs.Count >= 250, $"only {mobs.Count} mobs in the asset");
-        Assert.True(mobs.ContainsKey(49)); // little ladybug: Gladiator 01
+        // 452 mobs had non-FATE reports when this was imported (2026-11-19): 284 of the hunt log's
+        // 362, and 283 of the 545 that drop items.
+        Assert.True(mobs.Count >= 400, $"only {mobs.Count} mobs in the asset");
+        Assert.True(mobs.ContainsKey(49));   // little ladybug: Gladiator 01
+        Assert.True(mobs.ContainsKey(3576)); // a Wyvern Skin dropper
+        Assert.True(mobs[3576][0].Level > 0);
         Assert.All(mobs.Values, spots => Assert.All(spots, s => Assert.InRange(s.MapX, 1f, 45f)));
     }
 }

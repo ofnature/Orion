@@ -9,17 +9,24 @@ using Orion.Services.Farm;
 
 namespace Orion.Services.HuntLog;
 
-/// <summary>One recorded spot as the asset stores it: a map, a point in map coordinates, and how many reports back it.</summary>
-public readonly record struct RecordedSpot(uint MapId, float MapX, float MapY, int Reports);
-
-/// <summary>Where a mob has been seen in one overworld zone: world X and Z per spot, the busiest first.</summary>
-public sealed record HuntSpots(uint TerritoryId, IReadOnlyList<Vector2> Spots);
+/// <summary>
+/// One recorded spot as the asset stores it: a map, a point in map coordinates, how many reports
+/// back it, and the highest level the mob was seen at there (0 when the asset does not say).
+/// </summary>
+public readonly record struct RecordedSpot(uint MapId, float MapX, float MapY, int Reports, int Level = 0);
 
 /// <summary>
-/// Where the hunt log's mobs stand, from <c>Assets/hunt-positions.json</c>: FFXIV Teamcraft's
-/// player-reported positions (MIT), trimmed to hunt-log mobs and grouped into spots by
-/// <c>Tools/import_teamcraft_monsters.py</c>. The game's own sheets only name the area.
-/// Heights are not stored: the navmesh is asked for the floor once the character is in the zone.
+/// Where a mob has been seen in one overworld zone: world X and Z per spot, the busiest first,
+/// with the highest level seen there and the reports behind the whole zone.
+/// </summary>
+public sealed record HuntSpots(uint TerritoryId, IReadOnlyList<Vector2> Spots, int Level = 0, int Reports = 0);
+
+/// <summary>
+/// Where the mobs Orion hunts stand, from <c>Assets/hunt-positions.json</c>: FFXIV Teamcraft's
+/// player-reported positions (MIT), trimmed to the hunt log's mobs and the mobs that drop items,
+/// and grouped into spots by <c>Tools/import_teamcraft_monsters.py</c>. The game's own sheets only
+/// name the area. Heights are not stored: the navmesh is asked for the floor once the character
+/// is in the zone.
 /// </summary>
 public sealed class HuntPositions
 {
@@ -43,14 +50,16 @@ public sealed class HuntPositions
         }
         catch (Exception ex)
         {
-            warn($"Hunt positions could not be read from {path} ({ex.GetType().Name}: {ex.Message}) — the hunt log run has nowhere to go.");
+            warn($"Mob positions could not be read from {path} ({ex.GetType().Name}: {ex.Message}) — Orion has nowhere to travel to.");
             return;
         }
 
         var maps = data.GetExcelSheet<Map>();
         foreach (var (nameId, spots) in recorded)
         {
-            var zones = new List<HuntSpots>();
+            // Territory to (spots, highest level, reports), in the order the zones first appear.
+            var order = new List<uint>();
+            var zones = new Dictionary<uint, (List<Vector2> Spots, int Level, int Reports)>();
             foreach (var spot in spots)
             {
                 // Dungeon maps are in the reports too; only the overworld can be walked into.
@@ -63,13 +72,24 @@ public sealed class HuntPositions
                     FarmLocationHelper.MapCoordToWorld(spot.MapX, map.SizeFactor, map.OffsetX),
                     FarmLocationHelper.MapCoordToWorld(spot.MapY, map.SizeFactor, map.OffsetY));
 
-                var zone = zones.Find(z => z.TerritoryId == territory.RowId);
-                if (zone == null)
-                    zones.Add(zone = new HuntSpots(territory.RowId, new List<Vector2>()));
-                ((List<Vector2>)zone.Spots).Add(world);
+                if (!zones.TryGetValue(territory.RowId, out var zone))
+                {
+                    zone = (new List<Vector2>(), 0, 0);
+                    order.Add(territory.RowId);
+                }
+                zone.Spots.Add(world);
+                zones[territory.RowId] = (zone.Spots, Math.Max(zone.Level, spot.Level), zone.Reports + spot.Reports);
             }
-            if (zones.Count > 0)
-                _byMob[nameId] = zones;
+
+            if (order.Count == 0)
+                continue;
+            var list = new List<HuntSpots>(order.Count);
+            foreach (var territoryId in order)
+            {
+                var zone = zones[territoryId];
+                list.Add(new HuntSpots(territoryId, zone.Spots, zone.Level, zone.Reports));
+            }
+            _byMob[nameId] = list;
         }
     }
 
@@ -78,8 +98,8 @@ public sealed class HuntPositions
         => _byMob.TryGetValue(nameId, out var zones) ? zones : [];
 
     /// <summary>
-    /// The asset's <c>mobs</c> table: BNpcName id to <c>[map id, map x, map y, reports]</c> rows,
-    /// which the import tool writes busiest first within each map.
+    /// The asset's <c>mobs</c> table: BNpcName id to <c>[map id, map x, map y, reports, level]</c>
+    /// rows (level optional), which the import tool writes busiest first within each map.
     /// </summary>
     internal static Dictionary<uint, List<RecordedSpot>> Parse(string json)
     {
@@ -92,9 +112,12 @@ public sealed class HuntPositions
             var spots = new List<RecordedSpot>();
             foreach (var row in mob.Value.EnumerateArray())
             {
-                if (row.GetArrayLength() < 4)
+                var length = row.GetArrayLength();
+                if (length < 4)
                     continue;
-                spots.Add(new RecordedSpot(row[0].GetUInt32(), row[1].GetSingle(), row[2].GetSingle(), row[3].GetInt32()));
+                spots.Add(new RecordedSpot(
+                    row[0].GetUInt32(), row[1].GetSingle(), row[2].GetSingle(), row[3].GetInt32(),
+                    length > 4 ? row[4].GetInt32() : 0));
             }
             if (spots.Count > 0)
                 result[nameId] = spots;

@@ -40,6 +40,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     private readonly OrionConfig _config;
     private readonly FarmModeService _farm;
     private readonly HuntLogRunner _hunt;
+    private readonly TrophyRunner _trophy;
     private readonly GarlandDropSource _dropSource;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
@@ -76,8 +77,13 @@ public sealed class OrionPlugin : IDalamudPlugin
         var catalog = new HuntLogCatalog(DataManager);
         var positions = new HuntPositions(HuntPositions.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), DataManager, Warn);
         _hunt = new HuntLogRunner(
-            catalog, huntProgress, positions, _farm, new Traveller(world), world, nav.FloorAt,
+            catalog, huntProgress, positions, _farm, new SpotTravel(new Traveller(world), world, nav.FloorAt), world,
             () => ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0, GrandCompany, MissingTravelPlugin, Say);
+
+        // Trophy Hunt with no spot marked: the same travel, to a zone one of the item's droppers lives in.
+        _trophy = new TrophyRunner(
+            _farm, positions, new SpotTravel(new Traveller(world), world, nav.FloorAt), world,
+            () => ObjectTable.LocalPlayer?.Level ?? 0, () => _hunt.IsRunning, MissingTravelPlugin, Say);
 
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);
         // What this character is doing goes out on Daedalus's LAN bridge, and what the others' Orions
@@ -86,12 +92,14 @@ public sealed class OrionPlugin : IDalamudPlugin
 
         var huntLogPanel = new HuntLogPanel(
             catalog, huntProgress, positions, _hunt, _farm, ObjectTable, ClientState,
-            () => _mainWindow!.ShowMode(OrionMode.TrophyHunt));
+            () => _mainWindow!.ShowMode(OrionMode.TrophyHunt),
+            () => _trophy.IsRunning || (_farm.IsRunning && !_hunt.IsRunning));
+        var drops = new DropSources(DropSources.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), Warn);
         _mainWindow = new MainWindow(
-            _farm, _hunt, _dropSource, DataManager, TargetManager, ClientState, ObjectTable,
+            _farm, _hunt, _trophy, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
             () => nav.IsAvailable, huntLogPanel, _fleet, _config, SaveConfig, _settingsWindow.Toggle);
 
-        _ipc = new OrionIpc(PluginInterface, () => _farm.IsRunning || _hunt.IsRunning);
+        _ipc = new OrionIpc(PluginInterface, () => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning);
 
         _windowSystem.AddWindow(_mainWindow);
         _windowSystem.AddWindow(_settingsWindow);
@@ -134,6 +142,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _ipc.Dispose();
         _fleet.Dispose();
         _hunt.Dispose();
+        _trophy.Dispose();
         _farm.Notify -= Say;
         _farm.Dispose();
         Zones.Name = null;
@@ -143,6 +152,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     private void OnFrameworkUpdate(IFramework framework)
     {
         _hunt.Tick();
+        _trophy.Tick();
         _farm.Update();
         _fleet.Tick();
     }
@@ -156,7 +166,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         var name = player.Name.TextValue;
         var world = player.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty;
         var profile = _farm.Profile;
-        var running = _farm.IsRunning || _hunt.IsRunning;
+        var running = _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
 
         var progress = string.Empty;
         if (_farm.IsRunning)
@@ -175,7 +185,9 @@ public sealed class OrionPlugin : IDalamudPlugin
             Mode = !running ? string.Empty : _hunt.IsRunning ? ModeNames.HuntLog : ModeNames.TrophyHunt,
             Goal = !_farm.IsRunning ? string.Empty : profile.Hunt?.MobName ?? profile.ItemName,
             Progress = progress,
-            StatusLine = _hunt.IsRunning ? _hunt.StatusLine : _farm.IsRunning ? _farm.StatusLine : string.Empty,
+            StatusLine = _hunt.IsRunning ? _hunt.StatusLine
+                : _trophy.IsRunning ? _trophy.StatusLine
+                : _farm.IsRunning ? _farm.StatusLine : string.Empty,
             Zone = Zones.Name?.Invoke(ClientState.TerritoryType) ?? string.Empty,
             SentUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         };
@@ -206,6 +218,8 @@ public sealed class OrionPlugin : IDalamudPlugin
     {
         if (_hunt.IsRunning)
             _hunt.Stop(reason);
+        else if (_trophy.IsRunning)
+            _trophy.Stop(reason);
         else
             _farm.Stop(reason);
     }

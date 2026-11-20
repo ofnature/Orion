@@ -10,9 +10,15 @@ Keep it current as sources are added.
 `Orion/Assets/hunt-positions.json` is built from Teamcraft's `monsters.json`
 (`ffxiv-teamcraft/ffxiv-teamcraft`, `libs/data/src/lib/json/monsters.json`, staging branch,
 fetched 2026-11-19): positions players' clients reported for each mob. **It is modified**:
-`Tools/import_teamcraft_monsters.py` keeps the hunt log's mobs only, drops FATE spawns, and groups
-each mob's points on a map into a few spots. Every release carries
-`licenses/MIT-ffxiv-teamcraft.txt` beside the data. MIT is compatible with the AGPL.
+`Tools/import_teamcraft_monsters.py` keeps the hunt log's mobs and the mobs that drop items, drops
+FATE spawns, and groups each mob's points on a map into a few spots.
+
+`Orion/Assets/teamcraft-drop-sources.json` is Teamcraft's `drop-sources.json` (same repository
+and folder, fetched 2026-11-19): each item mobs drop, with the BNpcName ids of its droppers.
+**Shipped verbatim.** Trophy Hunt's item search uses it for its "dropped items only" filter.
+
+Every release carries `licenses/MIT-ffxiv-teamcraft.txt` beside the data. MIT is compatible with
+the AGPL.
 
 ## Code from the same suite
 

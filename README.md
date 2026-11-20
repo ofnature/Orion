@@ -6,9 +6,9 @@ does the fighting.
 
 The window has two modes, picked on its left side:
 
-- **Trophy Hunt**: name an item and a count, list the mobs that drop it, place one or more spots.
-  Orion kills those mobs around the spots, mounted between the long legs, until the bag holds the
-  count.
+- **Trophy Hunt**: pick an item and a count. The mobs that drop it are listed for you, and START
+  travels to a zone one of them lives in, marks the spots and kills them, mounted between the
+  long legs, until the bag holds the count. Mark a spot yourself to farm where you stand instead.
 - **Hunt Log**: shows the current rank of each class and Grand Company log with kills still owed.
   START works through the rank unattended: it travels to each mob, kills what the log still wants,
   and rolls into the next rank. Dungeon and FATE mobs are skipped. "Farm this" does one target by
@@ -24,7 +24,7 @@ as a tab on the screen edge, with the rest of the suite's.
 
 - Daedalus, for the fighting. It fights for Orion while `Orion.IsBusy` is true.
 - Ariadne or vnavmesh, for the walking in farm mode.
-- Ariadne and Lifestream, for the hunt log run's travel.
+- Ariadne and Lifestream, for travel: the hunt log run, and Trophy Hunt going to the mobs itself.
 
 ## Building
 

@@ -7,6 +7,7 @@
   "ApplicableVersion": "any",
   "DalamudApiLevel": 15,
   "RepoUrl": "https://github.com/ofnature/Orion",
+  "IconUrl": "https://raw.githubusercontent.com/ofnature/Orion/main/images/icon.png",
   "Tags": [
     "farming",
     "hunt log",

@@ -251,7 +251,8 @@ public sealed class FarmModeService : IDisposable
         var scanRadius = Math.Clamp(_configuration.Farm.ScanRadiusYalms, 10f, 100f);
         var candidate = _enemies.FindNearestAggroedEnemy(AggroCleanupRangeYalms, player)
             ?? _enemies.FindNearestEnemyByNameIds(
-                Profile.MobNameIds, Math.Max(scanRadius, Profile.LeashRadiusYalms), player, spot, Profile.LeashRadiusYalms);
+                Profile.MobNameIds, Math.Max(scanRadius, Profile.LeashRadiusYalms), player, spot, Profile.LeashRadiusYalms,
+                Profile.Hunt != null ? Profile.HuntMaxLevel : 0);
         if (candidate != null)
         {
             _daedalus.RecordTargetWrite(candidate.GameObjectId);

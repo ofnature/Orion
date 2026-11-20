@@ -160,6 +160,7 @@ public sealed class HuntLogPanel
                     profile.ClearMobs();
                     profile.AddMob(target.NameId, target.MobName);
                     profile.Hunt = target;
+                    profile.HuntMaxLevel = 0; // the player marks the spots here: no level limit
                     _showTrophyHunt();
                 }
                 ImGui.EndDisabled();

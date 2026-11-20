@@ -261,6 +261,7 @@ public sealed class HuntLogRunner : IDisposable
         profile.ClearMobs();
         profile.AddMob(leg.Target.NameId, leg.Target.MobName);
         profile.Hunt = leg.Target;
+        profile.HuntMaxLevel = HuntRoute.LevelCap(leg.Zone);
         profile.Spots.Clear();
         profile.Spots.AddRange(_travel.Spots);
         profile.TerritoryId = (ushort)leg.Zone.TerritoryId;

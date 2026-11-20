@@ -27,6 +27,12 @@ public sealed class FarmProfile
     /// </summary>
     public Orion.Services.HuntLog.HuntLogTarget? Hunt { get; set; }
 
+    /// <summary>
+    /// With <see cref="Hunt"/> set: listed mobs above this level are left alone (0 = no limit). The
+    /// hunt log run sets it so the higher-level variants of a mob's name are not picked.
+    /// </summary>
+    public int HuntMaxLevel { get; set; }
+
     public IReadOnlyList<FarmMob> Mobs => _mobs;
     public IReadOnlyCollection<uint> MobNameIds => _mobNameIds;
 

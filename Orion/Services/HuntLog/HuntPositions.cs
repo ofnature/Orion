@@ -18,8 +18,11 @@ public readonly record struct RecordedSpot(uint MapId, float MapX, float MapY, i
 /// <summary>
 /// Where a mob has been seen in one overworld zone: world X and Z per spot, the busiest first,
 /// with the highest level seen there and the reports behind the whole zone.
+/// <paramref name="SpotLevels"/> runs beside <paramref name="Spots"/>: the highest level seen at
+/// each spot, 0 when unknown. The same mob can stand at very different levels in one zone.
 /// </summary>
-public sealed record HuntSpots(uint TerritoryId, IReadOnlyList<Vector2> Spots, int Level = 0, int Reports = 0);
+public sealed record HuntSpots(
+    uint TerritoryId, IReadOnlyList<Vector2> Spots, int Level = 0, int Reports = 0, IReadOnlyList<int>? SpotLevels = null);
 
 /// <summary>
 /// Where the mobs Orion hunts stand, from <c>Assets/hunt-positions.json</c>: FFXIV Teamcraft's
@@ -59,7 +62,7 @@ public sealed class HuntPositions
         {
             // Territory to (spots, highest level, reports), in the order the zones first appear.
             var order = new List<uint>();
-            var zones = new Dictionary<uint, (List<Vector2> Spots, int Level, int Reports)>();
+            var zones = new Dictionary<uint, (List<Vector2> Spots, List<int> Levels, int Level, int Reports)>();
             foreach (var spot in spots)
             {
                 // Dungeon maps are in the reports too; only the overworld can be walked into.
@@ -74,11 +77,12 @@ public sealed class HuntPositions
 
                 if (!zones.TryGetValue(territory.RowId, out var zone))
                 {
-                    zone = (new List<Vector2>(), 0, 0);
+                    zone = (new List<Vector2>(), new List<int>(), 0, 0);
                     order.Add(territory.RowId);
                 }
                 zone.Spots.Add(world);
-                zones[territory.RowId] = (zone.Spots, Math.Max(zone.Level, spot.Level), zone.Reports + spot.Reports);
+                zone.Levels.Add(spot.Level);
+                zones[territory.RowId] = (zone.Spots, zone.Levels, Math.Max(zone.Level, spot.Level), zone.Reports + spot.Reports);
             }
 
             if (order.Count == 0)
@@ -87,7 +91,7 @@ public sealed class HuntPositions
             foreach (var territoryId in order)
             {
                 var zone = zones[territoryId];
-                list.Add(new HuntSpots(territoryId, zone.Spots, zone.Level, zone.Reports));
+                list.Add(new HuntSpots(territoryId, zone.Spots, zone.Level, zone.Reports, zone.Levels));
             }
             _byMob[nameId] = list;
         }

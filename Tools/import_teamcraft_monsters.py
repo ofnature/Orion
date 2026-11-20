@@ -44,7 +44,15 @@ def clusters(points):
         cy = sum(p[1] * n for p, n in inside) / total
         spots.append((round(cx, 2), round(cy, 2), total, max(levels[p] for p, _ in inside)))
     spots.sort(key=lambda s: -s[2])
-    return spots[:MAX_SPOTS_PER_MAP]
+    kept = spots[:MAX_SPOTS_PER_MAP]
+    # The hunt log run goes where a mob's level is lowest, and that can be a quiet corner the
+    # cut would drop: keep the lowest-level spot whatever its reports.
+    known = [s for s in spots if s[3] > 0]
+    if known:
+        lowest = min(known, key=lambda s: s[3])
+        if all(s[3] == 0 or s[3] > lowest[3] for s in kept):
+            kept.append(lowest)
+    return kept
 
 
 def main():

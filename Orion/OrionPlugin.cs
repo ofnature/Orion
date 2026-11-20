@@ -51,6 +51,14 @@ public sealed class OrionPlugin : IDalamudPlugin
 
     /// <summary>A trip home that cannot be sent for this long (still in a fight, a cutscene) is dropped.</summary>
     private static readonly TimeSpan HomeGiveUp = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Return asks "Return to …?" before it casts. Set when Orion presses Return: until then, a
+    /// yes/no window that opens is that question, and Orion answers Yes. Short, so a yes/no window
+    /// from anything else is never answered for you.
+    /// </summary>
+    private DateTime? _confirmReturnUntil;
+    private static readonly TimeSpan ReturnConfirmWindow = TimeSpan.FromSeconds(8);
     private readonly GarlandDropSource _dropSource;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
@@ -199,9 +207,40 @@ public sealed class OrionPlugin : IDalamudPlugin
         _homeQueuedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Answers Yes to the "Return to …?" window Orion's own Return press opened. The press is the
+    /// yes/no window's callback (value 0 is Yes), the way Demeter answers its dialogs.
+    /// </summary>
+    private unsafe void ConfirmReturn()
+    {
+        if (_confirmReturnUntil is not { } until)
+            return;
+        if (DateTime.UtcNow > until)
+        {
+            _confirmReturnUntil = null;
+            return;
+        }
+
+        try
+        {
+            var addon = GameGui.GetAddonByName("SelectYesno");
+            if (addon.IsNull || !addon.IsVisible)
+                return;
+            ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addon.Address)->FireCallbackInt(0);
+            _confirmReturnUntil = null;
+        }
+        catch (Exception ex)
+        {
+            _confirmReturnUntil = null;
+            Warn($"Confirming Return failed: {ex.Message}");
+        }
+    }
+
     /// <summary>Sends the queued trip home once the character can act: the last fight over, no cutscene, not mid-cast.</summary>
     private void TickHome()
     {
+        ConfirmReturn();
+
         if (_homeCommand is not { } command)
             return;
 
@@ -216,6 +255,8 @@ public sealed class OrionPlugin : IDalamudPlugin
             _homeCommand = null;
             Say($"Run complete: heading home ({RunHomeCommands.Label(_config.AfterRun)}).");
             _chat.Send(command);
+            if (_config.AfterRun == RunHome.Return)
+                _confirmReturnUntil = DateTime.UtcNow + ReturnConfirmWindow;
         }
         else if (DateTime.UtcNow - _homeQueuedAt > HomeGiveUp)
         {

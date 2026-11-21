@@ -63,6 +63,10 @@ public sealed class MainWindow : Window
     // Where START would travel to when no spot is marked; asked once a second, not per frame.
     private TrophyLeg? _plan;
     private long? _planCheckedAt;
+
+    // The gearset START would switch to; asked once a second, not per frame.
+    private GearsetInfo? _fightClass;
+    private long? _fightClassCheckedAt;
     private readonly Dictionary<ulong, string> _pendingLocations = new();
     private string _locationStatus = "";
 
@@ -273,9 +277,13 @@ public sealed class MainWindow : Window
             _farm.Stop("stopped by user");
     }
 
-    /// <summary>START: farm the marked spots, or with none marked, travel to the mobs first.</summary>
+    /// <summary>
+    /// START. An item run goes through Trophy Hunt's start: the class switch first, then the marked
+    /// spots, or with none marked, the trip to the mobs. A hunt log target farmed here starts as it
+    /// is: its kills only count on the class being played.
+    /// </summary>
     private void PressStart(FarmProfile profile)
-        => _startError = profile.Spots.Count > 0 ? _farm.Start() : _trophy.Start();
+        => _startError = profile.Hunt != null ? _farm.Start() : _trophy.Start();
 
     /// <summary>Where START would travel to for the mobs listed now; null when it would not.</summary>
     private TrophyLeg? TravelPlan(FarmProfile profile)
@@ -399,12 +407,54 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         ImGui.Spacing();
+        if (profile.Hunt == null)
+            DrawFightAs();
         var reason = BlockingReason(profile);
         if (HeroButton.Draw(FontAwesomeIcon.Play, "START", GoalSummary(profile), Styling.AccentViolet, reason == null, reason))
             PressStart(profile);
 
         if (_startError != null)
             ImGui.TextColored(Styling.AccentRose, _startError);
+    }
+
+    /// <summary>The class an item run fights on, and what that comes to on this character.</summary>
+    private void DrawFightAs()
+    {
+        var farm = _config.Farm;
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.BeginCombo("Fight as", FightClassPicker.Label(farm.FightAs)))
+        {
+            foreach (var choice in Enum.GetValues<FightAs>())
+            {
+                if (ImGui.Selectable(FightClassPicker.Label(choice), choice == farm.FightAs))
+                {
+                    farm.FightAs = choice;
+                    _saveConfig();
+                    _fightClassCheckedAt = null;
+                    _planCheckedAt = null; // the zone is chosen for the class that fights
+                }
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("START switches to this class's gearset before it sets off.\nRanged counts the casters as well as bow, gun and dance.");
+
+        if (farm.FightAs == FightAs.Current)
+            return;
+
+        // Walking a hundred gearset slots: asked once a second, not per frame.
+        var now = Environment.TickCount64;
+        if (_fightClassCheckedAt is not { } last || now - last >= 1000)
+        {
+            _fightClass = _trophy.FightClass();
+            _fightClassCheckedAt = now;
+        }
+
+        ImGui.SameLine();
+        if (_fightClass is { } set)
+            ImGui.TextColored(Styling.AccentMint, $"{set.ClassName}, level {set.Level}");
+        else
+            ImGui.TextColored(Styling.AccentRose, $"no {FightClassPicker.RoleName(farm.FightAs)} gearset saved");
     }
 
     private static string? GoalSummary(FarmProfile profile)

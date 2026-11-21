@@ -16,6 +16,13 @@ public sealed class FarmConfig
     /// </summary>
     public bool DroppedItemsOnly { get; set; } = true;
 
+    /// <summary>
+    /// The class Trophy Hunt switches to before it sets off: the one being played, the
+    /// highest-level ranged class, or the highest-level tank. Hunt log runs never switch: their
+    /// kills only count on the log's own class.
+    /// </summary>
+    public Orion.Services.Game.FightAs FightAs { get; set; } = Orion.Services.Game.FightAs.Current;
+
     /// <summary>How far from the active spot mobs may be pulled (yalms).</summary>
     public float DefaultLeashRadiusYalms { get; set; } = 60f;
 

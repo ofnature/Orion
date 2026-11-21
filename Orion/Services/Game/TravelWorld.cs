@@ -19,7 +19,7 @@ namespace Orion.Services.Game;
 /// members; the companion members are Odysseus's. Decision-free: every judgement lives in
 /// <see cref="Traveller"/> and <see cref="ChocoboKeeper"/>.
 /// </summary>
-public sealed unsafe class TravelWorld : ITravelWorld, IChocoboWorld
+public sealed unsafe class TravelWorld : ITravelWorld, IChocoboWorld, IFightClassWorld
 {
     /// <summary>GeneralAction 9 — Mount Roulette.</summary>
     private const uint MountRouletteGeneralAction = 9;
@@ -212,6 +212,61 @@ public sealed unsafe class TravelWorld : ITravelWorld, IChocoboWorld
         catch (Exception ex)
         {
             _log($"UseItem {itemId} failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    // ── Class and gearsets (Odysseus's reads) ──
+
+    public uint CurrentClassJob => _objectTable.LocalPlayer?.ClassJob.RowId ?? 0;
+
+    /// <summary>
+    /// The 100 gearset slots, without the empty ones and the ones whose class the character has
+    /// never levelled. The level is the class's, from <c>ClassJobLevels</c>: a gearset only
+    /// carries an item level.
+    /// </summary>
+    public IReadOnlyList<GearsetInfo> Gearsets()
+    {
+        var result = new List<GearsetInfo>();
+        try
+        {
+            var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
+            var state = PlayerState.Instance();
+            if (module == null || state == null)
+                return result;
+            var jobs = _data.GetExcelSheet<ClassJob>();
+            for (var i = 0; i < 100; i++)
+            {
+                if (!module->IsValidGearset(i))
+                    continue;
+                var entry = module->GetGearset(i);
+                if (entry == null || entry->ClassJob == 0)
+                    continue;
+                if (jobs.GetRowOrDefault(entry->ClassJob) is not { } job || job.ExpArrayIndex < 0)
+                    continue;
+                var level = state->ClassJobLevels[job.ExpArrayIndex];
+                if (level == 0)
+                    continue;
+                result.Add(new GearsetInfo(i, entry->ClassJob, job.Name.ExtractText(), job.Role, level));
+            }
+        }
+        catch (Exception ex)
+        {
+            _log($"Gearset scan failed: {ex.Message}");
+        }
+        return result;
+    }
+
+    public bool EquipGearset(int id)
+    {
+        try
+        {
+            var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
+            return module != null && module->IsValidGearset(id) && module->EquipGearset(id, 0) >= 0;
+        }
+        catch (Exception ex)
+        {
+            _log($"EquipGearset {id} failed: {ex.Message}");
             return false;
         }
     }

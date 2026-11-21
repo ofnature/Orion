@@ -77,21 +77,19 @@ public sealed class EnemyScanner
 
     /// <summary>
     /// The nearest enemy whose BNpcName row id is in <paramref name="nameIds"/>, optionally only
-    /// those within <paramref name="anchorRadiusYalms"/> of <paramref name="anchor"/>, and only
-    /// those at or below <paramref name="maxLevel"/> when it is above 0.
+    /// those standing where <paramref name="inReach"/> says yes, and only those at or below
+    /// <paramref name="maxLevel"/> when it is above 0.
     /// </summary>
     public IBattleNpc? FindNearestEnemyByNameIds(
         IReadOnlyCollection<uint> nameIds,
         float maxRange,
         IPlayerCharacter player,
-        Vector3? anchor = null,
-        float anchorRadiusYalms = 0f,
+        Func<Vector3, bool>? inReach = null,
         int maxLevel = 0)
     {
         if (nameIds.Count == 0)
             return null;
 
-        var anchorRadiusSq = anchorRadiusYalms * anchorRadiusYalms;
         IBattleNpc? nearest = null;
         var nearestDist = float.MaxValue;
         foreach (var enemy in ValidEnemies(maxRange, player))
@@ -111,7 +109,7 @@ public sealed class EnemyScanner
             if (maxLevel > 0 && enemy.Level > maxLevel)
                 continue;
 
-            if (anchor.HasValue && Vector3.DistanceSquared(anchor.Value, enemy.Position) > anchorRadiusSq)
+            if (inReach != null && !inReach(enemy.Position))
                 continue;
 
             var dist = Vector3.DistanceSquared(player.Position, enemy.Position);

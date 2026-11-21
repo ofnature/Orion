@@ -1,39 +1,62 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using Orion.Services.Game;
 using Orion.Services.HuntLog;
 using Orion.Services.Travel;
 
 namespace Orion.Services.Farm;
 
 /// <summary>
-/// Trophy Hunt's travel: with an item and its mobs set but no spot marked, picks a zone one of
-/// the mobs has been seen in (<see cref="TrophyRoute"/>), goes there (<see cref="SpotTravel"/>),
-/// marks the recorded spots, and starts farm mode. From then on the run is farm mode's own; this
-/// is only busy while it travels.
+/// Trophy Hunt's start: switches to the class chosen to fight on, then either farms the spots the
+/// player marked or, with none marked, picks a zone one of the mobs has been seen in
+/// (<see cref="TrophyRoute"/>), goes there (<see cref="SpotTravel"/>), marks a patrol around the
+/// recorded spots (<see cref="SearchPoints"/>), and starts farm mode. From then on the run is farm
+/// mode's own; this is only busy while it switches and travels.
 /// </summary>
 public sealed class TrophyRunner : IDisposable
 {
+    private enum Phase { Idle, Switching, Travelling }
+
+    /// <summary>A gearset change shows in the class within a moment; past this it did not take.</summary>
+    private static readonly TimeSpan SwitchTimeout = TimeSpan.FromSeconds(5);
+
     private readonly FarmModeService _farm;
     private readonly HuntPositions _positions;
     private readonly SpotTravel _travel;
     private readonly ITravelWorld _world;
+    private readonly IFightClassWorld _classes;
+    private readonly Func<FightAs> _fightAs;
+    private readonly Func<float, float, Vector3?> _floorAt;
     private readonly Func<int> _playerLevel;
     private readonly Func<bool> _otherRunBusy;
     private readonly Func<string?> _missingPlugin;
     private readonly Action<string> _say;
 
+    private Phase _phase;
     private TrophyLeg? _leg;
+    private GearsetInfo _switchingTo;
+    private DateTime _switchStarted;
 
-    public bool IsRunning { get; private set; }
-    public string StatusLine => IsRunning ? _travel.StatusLine : "Idle";
+    public bool IsRunning => _phase != Phase.Idle;
 
+    public string StatusLine => _phase switch
+    {
+        Phase.Switching => $"Switching to {_switchingTo.ClassName}",
+        Phase.Travelling => _travel.StatusLine,
+        _ => "Idle",
+    };
+
+    /// <param name="floorAt">The floor of the current zone's mesh at a world X and Z, or null.</param>
     /// <param name="otherRunBusy">Something else of Orion's is driving the character (the hunt log run).</param>
     public TrophyRunner(
         FarmModeService farm,
         HuntPositions positions,
         SpotTravel travel,
         ITravelWorld world,
+        IFightClassWorld classes,
+        Func<FightAs> fightAs,
+        Func<float, float, Vector3?> floorAt,
         Func<int> playerLevel,
         Func<bool> otherRunBusy,
         Func<string?> missingPlugin,
@@ -43,11 +66,20 @@ public sealed class TrophyRunner : IDisposable
         _positions = positions;
         _travel = travel;
         _world = world;
+        _classes = classes;
+        _fightAs = fightAs;
+        _floorAt = floorAt;
         _playerLevel = playerLevel;
         _otherRunBusy = otherRunBusy;
         _missingPlugin = missingPlugin;
         _say = say;
     }
+
+    /// <summary>The gearset START would fight on, or null when it keeps the class being played.</summary>
+    public GearsetInfo? FightClass()
+        => _fightAs() is var choice && choice == FightAs.Current
+            ? null
+            : FightClassPicker.Pick(_classes.Gearsets(), choice, _classes.CurrentClassJob);
 
     /// <summary>Where a start would go for the mobs listed now, or null when none can be placed and reached.</summary>
     public TrophyLeg? Plan()
@@ -59,11 +91,14 @@ public sealed class TrophyRunner : IDisposable
             if (zones.Count > 0)
                 candidates.Add(new TrophyCandidate(mob, zones));
         }
+
+        // The zone is chosen for the class that will do the fighting, not the one standing here.
+        var level = FightClass() is { } set ? set.Level : _playerLevel();
         return TrophyRoute.Pick(
-            candidates, _world.TerritoryId, _playerLevel(), territory => _world.RouteTo(territory, Vector3.Zero) is not null);
+            candidates, _world.TerritoryId, level, territory => _world.RouteTo(territory, Vector3.Zero) is not null);
     }
 
-    /// <summary>Sets off for the mobs. Returns why not, or null when it started.</summary>
+    /// <summary>Starts the run. Returns why not, or null when it started.</summary>
     public string? Start()
     {
         var profile = _farm.Profile;
@@ -73,13 +108,49 @@ public sealed class TrophyRunner : IDisposable
             return "another run is going — stop it first";
         if (profile.Hunt != null || profile.ItemId == 0 || profile.TargetCount <= 0 || profile.Mobs.Count == 0)
             return "needs an item, a target count and at least one mob";
-        if (_missingPlugin() is { } missing)
-            return $"{missing} is not loaded — travelling to the mobs needs Lifestream and Ariadne (or mark a spot yourself)";
+
+        var marked = profile.Spots.Count > 0;
+        if (!marked)
+        {
+            if (_missingPlugin() is { } missing)
+                return $"{missing} is not loaded — travelling to the mobs needs Lifestream and Ariadne (or mark a spot yourself)";
+            if (Plan() is null)
+                return "none of the listed mobs has a recorded position in a zone this character can reach — mark a spot yourself";
+        }
+
+        var choice = _fightAs();
+        if (choice != FightAs.Current)
+        {
+            if (FightClass() is not { } set)
+                return $"no gearset is saved for a {FightClassPicker.RoleName(choice)} class — save one, or set \"Fight as\" to the current class";
+
+            if (set.ClassJobId != _classes.CurrentClassJob)
+            {
+                if (!_classes.EquipGearset(set.Id))
+                    return $"the game refused the switch to {set.ClassName} — try again out of combat";
+                _switchingTo = set;
+                _switchStarted = _world.UtcNow;
+                _phase = Phase.Switching;
+                _say($"Trophy Hunt: switching to {set.ClassName} (level {set.Level}).");
+                return null;
+            }
+        }
+
+        return Go();
+    }
+
+    /// <summary>On the right class: farm the marked spots, or set off for the mobs.</summary>
+    private string? Go()
+    {
+        _phase = Phase.Idle;
+        if (_farm.Profile.Spots.Count > 0)
+            return _farm.Start();
+
         if (Plan() is not { } leg)
             return "none of the listed mobs has a recorded position in a zone this character can reach — mark a spot yourself";
 
         _leg = leg;
-        IsRunning = true;
+        _phase = Phase.Travelling;
         _travel.Begin(leg.Zone, leg.Mob.Name);
         _say($"Trophy Hunt: heading to {Zones.Describe(leg.Zone.TerritoryId)} for {leg.Mob.Name}.");
         return null;
@@ -96,14 +167,29 @@ public sealed class TrophyRunner : IDisposable
             return;
         }
 
+        if (_phase == Phase.Switching)
+        {
+            if (_classes.CurrentClassJob == _switchingTo.ClassJobId)
+            {
+                if (Go() is { } error)
+                    _say($"Trophy Hunt: on {_switchingTo.ClassName}, but the run would not start — {error}.");
+            }
+            else if (_world.UtcNow - _switchStarted > SwitchTimeout)
+            {
+                Stop($"the class did not change to {_switchingTo.ClassName}");
+            }
+            return;
+        }
+
         switch (_travel.Tick())
         {
             case TravelStatus.Done:
-                // Arrived: the recorded spots become the profile's, and farm mode takes it from here.
-                IsRunning = false;
+                // Arrived: a patrol around the recorded spots becomes the profile's, and farm mode
+                // takes it from here.
+                _phase = Phase.Idle;
                 var profile = _farm.Profile;
                 profile.Spots.Clear();
-                profile.Spots.AddRange(_travel.Spots);
+                profile.Spots.AddRange(SearchPoints.Around(_travel.Spots, _floorAt));
                 profile.TerritoryId = (ushort)_leg!.Zone.TerritoryId;
                 if (_farm.Start() is { } error)
                     _say($"Trophy Hunt: arrived, but the farm would not start — {error}.");
@@ -120,9 +206,9 @@ public sealed class TrophyRunner : IDisposable
         if (!IsRunning)
             return;
 
-        IsRunning = false;
+        _phase = Phase.Idle;
         _travel.Cancel();
-        _say($"Trophy Hunt: travel stopped — {reason}.");
+        _say($"Trophy Hunt: stopped before the farm began — {reason}.");
     }
 
     public void Dispose() => Stop("plugin unloading");

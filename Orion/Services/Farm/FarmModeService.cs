@@ -50,6 +50,15 @@ public sealed class FarmModeService : IDisposable
     private ulong _approachTargetId;
     private DateTime? _atTagRangeSinceUtc;
 
+    // The walk to the active spot: whether a path was asked for, how far off the spot was then,
+    // and whether the spot turned out to be somewhere the character cannot stand
+    // (FarmRoamPolicy.SpotIsOutOfReach). Started over with each new spot and after each mob.
+    private bool _legPathAsked;
+    private float _legDistanceAtPath;
+    private DateTime _legPathAtUtc;
+    private bool _legSettled;
+    private bool _rideQueuedPath;
+
     // ---- v4 mounted travel state ----
     private const double MountCastTimeoutSeconds = 3.0;
     private const double MountGiveUpSeconds = 30.0;
@@ -123,6 +132,7 @@ public sealed class FarmModeService : IDisposable
         IsRunning = true;
         _spotIndex = 0;
         _atSpot = false;
+        ResetLeg();
         Kills = 0;
         _lastEngagedTargetId = 0;
         _foughtEngaged = false;
@@ -246,15 +256,19 @@ public sealed class FarmModeService : IDisposable
         var spot = Profile.Spots[Math.Min(_spotIndex, Profile.Spots.Count - 1)];
 
         // Acquire: finish anything on us first, then the nearest profile mob. The player-centered
-        // scan runs out to the v4 acquisition radius (spot leash still applies — the widened
-        // funnel must not pull the toon outside the patrol area).
+        // scan runs out to the v4 acquisition radius; a mob counts when it is inside the leash of
+        // any spot of the patrol or right beside the character (FarmRoamPolicy.InReach), so the
+        // widened funnel still cannot pull the toon far outside the patrol area.
         var scanRadius = Math.Clamp(_configuration.Farm.ScanRadiusYalms, 10f, 100f);
+        var playerPosition = player.Position;
         var candidate = _enemies.FindNearestAggroedEnemy(AggroCleanupRangeYalms, player)
             ?? _enemies.FindNearestEnemyByNameIds(
-                Profile.MobNameIds, Math.Max(scanRadius, Profile.LeashRadiusYalms), player, spot, Profile.LeashRadiusYalms,
+                Profile.MobNameIds, Math.Max(scanRadius, Profile.LeashRadiusYalms), player,
+                mob => FarmRoamPolicy.InReach(mob, playerPosition, Profile.Spots, Profile.LeashRadiusYalms),
                 Profile.Hunt != null ? Profile.HuntMaxLevel : 0);
         if (candidate != null)
         {
+            ResetLeg(); // the fight will leave the character somewhere else
             _daedalus.RecordTargetWrite(candidate.GameObjectId);
             _targetManager.Target = candidate;
             // Remember the mob at ACQUISITION: high-level toons one-shot farm mobs inside a single
@@ -502,6 +516,7 @@ public sealed class FarmModeService : IDisposable
 
         if (result != VNavMoveResult.Queued)
             _log.Debug("[Farm] mounted path not queued: {0}", result);
+        _rideQueuedPath = true;
 
         StatusLine = fly && !_flyFailedThisLeg ? $"Flying to {label}" : $"Riding to {label}";
 
@@ -509,32 +524,70 @@ public sealed class FarmModeService : IDisposable
             _configuration.Farm.FlyWhenPossible && !_flyFailedThisLeg && _mount.CanFlyInCurrentZone();
     }
 
+    private void ResetLeg()
+    {
+        _legPathAsked = false;
+        _legSettled = false;
+    }
+
+    /// <summary>
+    /// A path to the active spot was asked for. Only the first ask, and one made from nearer than
+    /// the last, starts the clock again: an ask that got nowhere must not hide the one before it.
+    /// </summary>
+    private void NoteSpotPath(float distance)
+    {
+        if (_legPathAsked && distance > _legDistanceAtPath - FarmRoamPolicy.ProgressYalms)
+            return;
+        _legPathAsked = true;
+        _legDistanceAtPath = distance;
+        _legPathAtUtc = DateTime.UtcNow;
+    }
+
     private void Roam(Vector3 playerPosition, Vector3 spot)
     {
-        var distance = Vector3.Distance(playerPosition, spot);
-        var wasAtSpot = _atSpot;
-        _atSpot = distance <= FarmRoamPolicy.ArriveToleranceYalms;
-        if (_atSpot && !wasAtSpot)
-            _arrivedAtSpotUtc = DateTime.UtcNow;
-
-        var idleSeconds = _atSpot ? (DateTime.UtcNow - _arrivedAtSpotUtc).TotalSeconds : 0;
-
-        // Long spot legs travel mounted (fly where legal); short hops walk as before.
-        if (HandleMountedTravel(spot, distance, destinationIsMob: false, $"spot {_spotIndex + 1}/{Profile.Spots.Count}"))
-            return;
-
+        var now = DateTime.UtcNow;
+        var distance = FarmRoamPolicy.Flat(playerPosition, spot);
         var navBusy = _vNav.IsPathRunning || _vNav.IsPathfindInProgress;
 
-        switch (FarmRoamPolicy.Decide(navBusy, distance, idleSeconds, _configuration.Farm.RespawnWaitSeconds, Profile.Spots.Count))
+        if (!_legSettled && distance > FarmRoamPolicy.ArriveToleranceYalms
+            && FarmRoamPolicy.SpotIsOutOfReach(
+                navBusy, _legPathAsked, (now - _legPathAtUtc).TotalSeconds, _legDistanceAtPath, distance))
+        {
+            _legSettled = true;
+            _log.Info("[Farm] spot {0} cannot be reached: staying {1:F0}y short of it", _spotIndex + 1, distance);
+        }
+
+        var wasAtSpot = _atSpot;
+        _atSpot = distance <= FarmRoamPolicy.ArriveToleranceYalms || _legSettled;
+        if (_atSpot && !wasAtSpot)
+            _arrivedAtSpotUtc = now;
+
+        var idleSeconds = _atSpot ? (now - _arrivedAtSpotUtc).TotalSeconds : 0;
+
+        // Nothing left to travel once the character is as near the spot as it gets.
+        var toGo = _atSpot ? 0f : distance;
+
+        // Long spot legs travel mounted (fly where legal); short hops walk as before.
+        _rideQueuedPath = false;
+        if (HandleMountedTravel(spot, toGo, destinationIsMob: false, $"spot {_spotIndex + 1}/{Profile.Spots.Count}"))
+        {
+            if (_rideQueuedPath)
+                NoteSpotPath(distance);
+            return;
+        }
+
+        switch (FarmRoamPolicy.Decide(navBusy, toGo, idleSeconds, _configuration.Farm.RespawnWaitSeconds, Profile.Spots.Count))
         {
             case FarmRoamAction.MoveToSpot:
                 _vNav.PathfindAndMoveTo(_vNav.SnapToFloor(spot));
+                NoteSpotPath(distance);
                 StatusLine = $"Moving to spot {_spotIndex + 1}/{Profile.Spots.Count}";
                 break;
 
             case FarmRoamAction.AdvanceSpot:
                 _spotIndex = FarmRoamPolicy.NextSpotIndex(_spotIndex, Profile.Spots.Count);
                 _atSpot = false;
+                ResetLeg();
                 _flyFailedThisLeg = false; // new travel leg
                 StatusLine = $"Roaming to spot {_spotIndex + 1}/{Profile.Spots.Count}";
                 break;

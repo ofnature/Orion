@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+
 namespace Orion.Services.Farm;
 
 public enum FarmRoamAction
@@ -41,6 +45,55 @@ public static class FarmRoamPolicy
 
     public static int NextSpotIndex(int current, int spotCount)
         => spotCount <= 0 ? 0 : (current + 1) % spotCount;
+
+    /// <summary>Mobs this close to the character are taken wherever the spots are.</summary>
+    public const float NearbyYalms = 30f;
+
+    /// <summary>A path that leaves the character less than this much nearer got nowhere.</summary>
+    public const float ProgressYalms = 2f;
+
+    /// <summary>How long after asking for a path before judging it: the pathfind itself takes a moment.</summary>
+    public const double PathSettleSeconds = 1.5;
+
+    /// <summary>
+    /// Distance across the ground, heights ignored. A spot Orion marked for itself has its height
+    /// read off the mesh from above, which can be a ledge or a roof over the ground the mobs stand on.
+    /// </summary>
+    public static float Flat(Vector3 a, Vector3 b)
+    {
+        var dx = a.X - b.X;
+        var dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dz * dz);
+    }
+
+    /// <summary>
+    /// Whether a mob is one to go for: inside the leash of any spot of the patrol, or right beside
+    /// the character. Measured from the active spot alone, a mob standing next to the character on
+    /// the way between two spots, or just past the circle after a chase, was passed over.
+    /// </summary>
+    public static bool InReach(
+        Vector3 mob, Vector3 player, IReadOnlyList<Vector3> spots, float leashYalms, float nearbyYalms = NearbyYalms)
+    {
+        if (Vector3.Distance(mob, player) <= nearbyYalms)
+            return true;
+        foreach (var spot in spots)
+        {
+            if (Flat(mob, spot) <= leashYalms)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The spot cannot be stood on: a path was asked for, it has had time to run, it is no longer
+    /// running, and the character is no nearer than when it was asked. Asking again every poll is
+    /// a step and a stop twice a second, for ever, and the patrol never moves on; where the
+    /// character stands is as close as this spot gets.
+    /// </summary>
+    public static bool SpotIsOutOfReach(
+        bool navBusy, bool pathAsked, double secondsSincePath, float distanceAtPath, float distanceNow)
+        => !navBusy && pathAsked && secondsSincePath >= PathSettleSeconds
+           && distanceNow > distanceAtPath - ProgressYalms;
 
     /// <summary>
     /// Whether a target that is no longer a live target was a kill. Still in the object table, it

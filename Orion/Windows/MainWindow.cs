@@ -31,6 +31,8 @@ public sealed class MainWindow : Window
     private readonly FarmModeService _farm;
     private readonly HuntLogRunner _hunt;
     private readonly TrophyRunner _trophy;
+    private readonly TrophyListRunner _listRun;
+    private readonly HuntingListsPanel _lists;
     private readonly GarlandDropSource _dropSource;
     private readonly DropSources _drops;
     private readonly IDataManager _dataManager;
@@ -78,6 +80,8 @@ public sealed class MainWindow : Window
         FarmModeService farm,
         HuntLogRunner hunt,
         TrophyRunner trophy,
+        TrophyListRunner listRun,
+        HuntingListsPanel lists,
         GarlandDropSource dropSource,
         DropSources drops,
         IDataManager dataManager,
@@ -96,6 +100,8 @@ public sealed class MainWindow : Window
         _farm = farm;
         _hunt = hunt;
         _trophy = trophy;
+        _listRun = listRun;
+        _lists = lists;
         _dropSource = dropSource;
         _drops = drops;
         _dataManager = dataManager;
@@ -254,8 +260,8 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>A farm run, or a hunt log run (which is between farms while it travels).</summary>
-    private bool Busy => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
+    /// <summary>A farm run, or a hunt log run or hunting list (which are between farms while they travel).</summary>
+    private bool Busy => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning || _listRun.IsRunning;
 
     /// <summary>The status line of whichever run is driving the character.</summary>
     private string RunStatus
@@ -271,6 +277,8 @@ public sealed class MainWindow : Window
     {
         if (_hunt.IsRunning)
             _hunt.Stop("stopped by user");
+        else if (_listRun.IsRunning)
+            _listRun.Stop("stopped by user");
         else if (_trophy.IsRunning)
             _trophy.Stop("stopped by user");
         else
@@ -283,7 +291,21 @@ public sealed class MainWindow : Window
     /// is: its kills only count on the class being played.
     /// </summary>
     private void PressStart(FarmProfile profile)
-        => _startError = profile.Hunt != null ? _farm.Start() : _trophy.Start();
+    {
+        if (profile.Hunt != null)
+        {
+            _startError = _farm.Start();
+            return;
+        }
+
+        _startError = _trophy.Start();
+        if (_startError == null)
+        {
+            // Remembered for next time: the item, the count and the mobs come back after a reload.
+            _config.Farm.LastHunt = LastHunt.Snapshot(profile);
+            _saveConfig();
+        }
+    }
 
     /// <summary>Where START would travel to for the mobs listed now; null when it would not.</summary>
     private TrophyLeg? TravelPlan(FarmProfile profile)
@@ -353,7 +375,10 @@ public sealed class MainWindow : Window
         // farm mode has nothing to show until it gets there.
         if (!_farm.IsRunning)
         {
-            Styling.SectionLabel(_trophy.IsRunning ? ModeNames.TrophyHunt : $"{_hunt.Book?.Name} hunt log");
+            Styling.SectionLabel(
+                _listRun.IsRunning ? $"Hunting list, {_listRun.Progress}"
+                : _trophy.IsRunning ? ModeNames.TrophyHunt
+                : $"{_hunt.Book?.Name} hunt log");
             ImGui.TextColored(Styling.TextSecondary, RunStatus);
             Styling.VSpace(4f);
             if (StopButton())
@@ -378,6 +403,8 @@ public sealed class MainWindow : Window
         StatTile.Draw("Spot", $"{_farm.ActiveSpotIndex + 1} / {profile.Spots.Count}", null, Styling.AccentMint, tileWidth);
 
         Styling.VSpace(4f);
+        if (_listRun.IsRunning)
+            ImGui.TextColored(Styling.TextDim, $"Hunting list, {_listRun.Progress}");
         ImGui.TextColored(Styling.TextSecondary, _farm.StatusLine);
         Styling.VSpace(4f);
 
@@ -415,6 +442,9 @@ public sealed class MainWindow : Window
 
         if (_startError != null)
             ImGui.TextColored(Styling.AccentRose, _startError);
+
+        Styling.VSpace(12f);
+        _lists.Draw();
     }
 
     /// <summary>The class an item run fights on, and what that comes to on this character.</summary>
@@ -504,6 +534,11 @@ public sealed class MainWindow : Window
                 profile.ItemName = "";
                 _startError = null;
             }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("add to list##orionItem"))
+                _lists.Add(profile.ItemId, profile.ItemName, profile.TargetCount);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Save this item and its target count on {_lists.TargetName} (under Hunting lists, below).");
         }
 
         var droppedOnly = _config.Farm.DroppedItemsOnly;
@@ -559,7 +594,7 @@ public sealed class MainWindow : Window
 
     private void DrawMobs(FarmProfile profile)
     {
-        ImGui.TextColored(Styling.TextDim, "The list is not saved: it lasts the session.");
+        ImGui.TextColored(Styling.TextDim, "Saved when you press START, and brought back next time.");
         if (ImGui.Button("Add current target"))
         {
             if (_targetManager.Target is IBattleNpc npc && npc.NameId != 0)
@@ -766,23 +801,17 @@ public sealed class MainWindow : Window
     /// </summary>
     private void FillDroppers(FarmProfile profile, uint itemId)
     {
-        var droppers = _drops.MobsFor(itemId);
+        var names = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
+        var droppers = _drops.NamedMobsFor(itemId, nameId => names?.GetRowOrDefault(nameId)?.Singular.ExtractText());
         if (droppers.Count == 0)
             return;
 
         // New prey: spots marked for the last item's mobs no longer mean anything.
-        var names = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
         profile.ClearMobs();
         profile.Spots.Clear();
         _planCheckedAt = null;
-        foreach (var nameId in droppers)
-        {
-            var name = names?.GetRowOrDefault(nameId)?.Singular.ExtractText();
-            if (string.IsNullOrEmpty(name))
-                continue;
-            // Sheet names are lowercase ("ground squirrel").
-            profile.AddMob(nameId, char.IsLower(name[0]) ? char.ToUpperInvariant(name[0]) + name[1..] : name);
-        }
+        foreach (var mob in droppers)
+            profile.AddMob(mob.NameId, mob.Name);
         _locationStatus = $"{profile.Mobs.Count} dropper(s) listed for {profile.ItemName}. Remove any you do not want.";
     }
 

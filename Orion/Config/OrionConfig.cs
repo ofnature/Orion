@@ -34,6 +34,9 @@ public sealed class OrionConfig : IPluginConfiguration
 
     public FarmConfig Farm { get; set; } = new();
 
+    /// <summary>The saved hunting lists: items and the bag counts to hunt them up to.</summary>
+    public System.Collections.Generic.List<Services.Farm.TrophyList> HuntingLists { get; set; } = [];
+
     /// <summary>
     /// Keep the chocobo companion summoned while a run is going, feeding it a Gysahl Green whenever
     /// the timer runs low. Does nothing until "My Little Chocobo" is done, and never spends a green

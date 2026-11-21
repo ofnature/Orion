@@ -42,6 +42,24 @@ public sealed class DropSources
     public IReadOnlyList<uint> MobsFor(uint itemId)
         => _mobsByItem.TryGetValue(itemId, out var mobs) ? mobs : [];
 
+    /// <summary>
+    /// The mobs known to drop an item, named for the mob list. <paramref name="nameOf"/> is the
+    /// BNpcName sheet's singular, which is lowercase ("ground squirrel"); a mob it has no name for
+    /// is left out.
+    /// </summary>
+    public IReadOnlyList<FarmMob> NamedMobsFor(uint itemId, Func<uint, string?> nameOf)
+    {
+        var mobs = new List<FarmMob>();
+        foreach (var nameId in MobsFor(itemId))
+        {
+            var name = nameOf(nameId);
+            if (string.IsNullOrEmpty(name))
+                continue;
+            mobs.Add(new FarmMob(nameId, char.IsLower(name[0]) ? char.ToUpperInvariant(name[0]) + name[1..] : name));
+        }
+        return mobs;
+    }
+
     /// <summary>Teamcraft's file: <c>{ "item id": [BNpcName id, ...], ... }</c>.</summary>
     internal static Dictionary<uint, uint[]> Parse(string json)
     {

@@ -59,6 +59,12 @@ public sealed class FarmConfig
     public bool FlyWhenPossible { get; set; } = true;
 
     /// <summary>
+    /// The last Trophy Hunt started from the window (item, count, mobs), put back as the working
+    /// profile when the plugin loads. Null until one has been started.
+    /// </summary>
+    public SavedFarmProfile? LastHunt { get; set; }
+
+    /// <summary>
     /// Saved farm profiles — persistence is wired for later; v1 has no UI for these on purpose
     /// (the user wants the working list temp-only for now).
     /// </summary>

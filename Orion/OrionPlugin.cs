@@ -41,6 +41,7 @@ public sealed class OrionPlugin : IDalamudPlugin
     private readonly FarmModeService _farm;
     private readonly HuntLogRunner _hunt;
     private readonly TrophyRunner _trophy;
+    private readonly TrophyListRunner _lists;
     private readonly ChocoboKeeper _chocobo;
     private readonly TravelWorld _world;
     private readonly ChatCommandSender _chat;
@@ -82,6 +83,7 @@ public sealed class OrionPlugin : IDalamudPlugin
             _config, ObjectTable, TargetManager, new EnemyScanner(ObjectTable), nav, ItemCount,
             huntProgress, daedalus, ClientState, mounts, Log);
         _farm.Notify += Say;
+        LastHunt.Restore(_config.Farm.LastHunt, _farm.Profile);
         _dropSource = new GarlandDropSource(DataManager, Log);
 
         // The hunt log run: Lifestream into the zone and Ariadne to the spot (Demeter's travel),
@@ -109,8 +111,16 @@ public sealed class OrionPlugin : IDalamudPlugin
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);
         // A run that reached its goal sends the character home, if a home is chosen. The hunt log
         // run fills its targets through farm mode, so a farm ending inside one is not the run ending.
-        _farm.Ended += completed => { if (completed && !_hunt.IsRunning) QueueHome(); };
+        // A hunting list is the same: each item is a farm of its own, and only the list ending counts.
+        var drops = new DropSources(DropSources.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), Warn);
+        var mobNames = DataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
+        _lists = new TrophyListRunner(
+            new TrophyHunt(_farm, _trophy,
+                itemId => drops.NamedMobsFor(itemId, nameId => mobNames.GetRowOrDefault(nameId)?.Singular.ExtractText())),
+            itemId => (int)ItemCount(itemId), () => world.IsDead, () => _hunt.IsRunning, Say);
+        _farm.Ended += completed => { if (completed && !_hunt.IsRunning && !_lists.IsRunning) QueueHome(); };
         _hunt.Ended += completed => { if (completed) QueueHome(); };
+        _lists.Ended += completed => { if (completed) QueueHome(); };
 
         // The chocobo companion, kept out while a run is going (and only then: a green is half an hour).
         _chocobo = new ChocoboKeeper(
@@ -124,9 +134,11 @@ public sealed class OrionPlugin : IDalamudPlugin
             catalog, huntProgress, positions, _hunt, _farm, ObjectTable, ClientState,
             () => _mainWindow!.ShowMode(OrionMode.TrophyHunt),
             () => _trophy.IsRunning || (_farm.IsRunning && !_hunt.IsRunning));
-        var drops = new DropSources(DropSources.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), Warn);
+        var listsPanel = new HuntingListsPanel(
+            _config, SaveConfig, _lists, itemId => (int)ItemCount(itemId),
+            () => !nav.IsAvailable ? "install Ariadne or vnavmesh" : RunGoing ? "another run is going" : null);
         _mainWindow = new MainWindow(
-            _farm, _hunt, _trophy, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
+            _farm, _hunt, _trophy, _lists, listsPanel, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
             () => nav.IsAvailable, huntLogPanel, _fleet, world, _config, SaveConfig, _settingsWindow.Toggle);
 
         // A trip home still to be sent counts: Daedalus should finish the last fight before it goes.
@@ -173,6 +185,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _ipc.Dispose();
         _fleet.Dispose();
         _hunt.Dispose();
+        _lists.Dispose();
         _trophy.Dispose();
         _farm.Notify -= Say;
         _farm.Dispose();
@@ -185,13 +198,14 @@ public sealed class OrionPlugin : IDalamudPlugin
         _hunt.Tick();
         _trophy.Tick();
         _farm.Update();
+        _lists.Tick();
         _chocobo.Tick();
         _fleet.Tick();
         TickHome();
     }
 
-    /// <summary>A farm run, a hunt log run, or Trophy Hunt on its way to the mobs.</summary>
-    private bool RunGoing => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
+    /// <summary>A farm run, a hunt log run, Trophy Hunt on its way to the mobs, or a hunting list between items.</summary>
+    private bool RunGoing => _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning || _lists.IsRunning;
 
     /// <summary>A run completed: line up the trip home the settings name, if any.</summary>
     private void QueueHome()
@@ -275,7 +289,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         var name = player.Name.TextValue;
         var world = player.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty;
         var profile = _farm.Profile;
-        var running = _farm.IsRunning || _hunt.IsRunning || _trophy.IsRunning;
+        var running = RunGoing;
 
         var progress = string.Empty;
         if (_farm.IsRunning)
@@ -328,6 +342,8 @@ public sealed class OrionPlugin : IDalamudPlugin
         _homeCommand = null;
         if (_hunt.IsRunning)
             _hunt.Stop(reason);
+        else if (_lists.IsRunning)
+            _lists.Stop(reason);
         else if (_trophy.IsRunning)
             _trophy.Stop(reason);
         else

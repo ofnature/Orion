@@ -28,6 +28,7 @@ public sealed class TrophyRunner : IDisposable
     private readonly IFightClassWorld _classes;
     private readonly Func<FightAs> _fightAs;
     private readonly Func<float, float, Vector3?> _floorAt;
+    private readonly Func<float> _searchRadius;
     private readonly Func<int> _playerLevel;
     private readonly Func<bool> _otherRunBusy;
     private readonly Func<string?> _missingPlugin;
@@ -48,6 +49,7 @@ public sealed class TrophyRunner : IDisposable
     };
 
     /// <param name="floorAt">The floor of the current zone's mesh at a world X and Z, or null.</param>
+    /// <param name="searchRadius">How far around each recorded spot the patrol reaches, in yalms.</param>
     /// <param name="otherRunBusy">Something else of Orion's is driving the character (the hunt log run).</param>
     public TrophyRunner(
         FarmModeService farm,
@@ -57,6 +59,7 @@ public sealed class TrophyRunner : IDisposable
         IFightClassWorld classes,
         Func<FightAs> fightAs,
         Func<float, float, Vector3?> floorAt,
+        Func<float> searchRadius,
         Func<int> playerLevel,
         Func<bool> otherRunBusy,
         Func<string?> missingPlugin,
@@ -69,6 +72,7 @@ public sealed class TrophyRunner : IDisposable
         _classes = classes;
         _fightAs = fightAs;
         _floorAt = floorAt;
+        _searchRadius = searchRadius;
         _playerLevel = playerLevel;
         _otherRunBusy = otherRunBusy;
         _missingPlugin = missingPlugin;
@@ -189,7 +193,7 @@ public sealed class TrophyRunner : IDisposable
                 _phase = Phase.Idle;
                 var profile = _farm.Profile;
                 profile.Spots.Clear();
-                profile.Spots.AddRange(SearchPoints.Around(_travel.Spots, _floorAt));
+                profile.Spots.AddRange(SearchPoints.Around(_travel.Spots, _floorAt, _searchRadius()));
                 profile.TerritoryId = (ushort)_leg!.Zone.TerritoryId;
                 if (_farm.Start() is { } error)
                     _say($"Trophy Hunt: arrived, but the farm would not start — {error}.");

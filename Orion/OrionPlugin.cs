@@ -103,7 +103,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         // Trophy Hunt with no spot marked: the same travel, to a zone one of the item's droppers lives in.
         _trophy = new TrophyRunner(
             _farm, positions, new SpotTravel(new Traveller(world), world, nav.FloorAt), world,
-            world, () => _config.Farm.FightAs, nav.FloorAt,
+            world, () => _config.Farm.FightAs, nav.FloorAt, () => _config.Farm.SearchRadiusYalms,
             () => ObjectTable.LocalPlayer?.Level ?? 0, () => _hunt.IsRunning, MissingTravelPlugin, Say);
 
         _settingsWindow = new SettingsWindow(_config, SaveConfig, mounts);

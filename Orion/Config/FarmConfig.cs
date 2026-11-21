@@ -23,6 +23,12 @@ public sealed class FarmConfig
     /// </summary>
     public Orion.Services.Game.FightAs FightAs { get; set; } = Orion.Services.Game.FightAs.Current;
 
+    /// <summary>
+    /// How far around each recorded spot Trophy Hunt patrols when it marks the spots itself
+    /// (yalms): a ring of search points every 80. 0 stands on the recorded spots alone.
+    /// </summary>
+    public float SearchRadiusYalms { get; set; } = 160f;
+
     /// <summary>How far from the active spot mobs may be pulled (yalms).</summary>
     public float DefaultLeashRadiusYalms { get; set; } = 60f;
 

@@ -20,6 +20,59 @@ public class SearchPointsTests
     }
 
     [Fact]
+    public void Around_AWiderSearch_AddsASecondRingOfEight()
+    {
+        var spot = new Vector3(0f, 0f, 0f);
+
+        var patrol = SearchPoints.Around([spot], Ground(), radiusYalms: 160f);
+
+        Assert.Equal(13, patrol.Count); // the spot, four at 80 yalms, eight at 160
+        Assert.Equal(8, patrol.Count(p => MathF.Abs(FarmRoamPolicy.Flat(p, spot) - 160f) < 0.01f));
+        for (var i = 0; i < patrol.Count; i++)
+            for (var j = i + 1; j < patrol.Count; j++)
+                Assert.True(FarmRoamPolicy.Flat(patrol[i], patrol[j]) >= SearchPoints.MinApartYalms);
+    }
+
+    [Fact]
+    public void Around_ASearchOfNothing_StandsOnTheRecordedSpotsAlone()
+    {
+        var spots = new[] { new Vector3(0f, 0f, 0f), new Vector3(300f, 0f, 0f) };
+
+        Assert.Equal(spots, SearchPoints.Around(spots, Ground(), radiusYalms: 0f));
+    }
+
+    [Fact]
+    public void Around_TheWidestSearch_StaysUnderThePatrolLimit_AndKeepsEveryRecordedSpot()
+    {
+        // Four recorded spots a long way apart, four rings each: 160 points if nothing held it back.
+        var spots = new[]
+        {
+            new Vector3(0f, 0f, 0f), new Vector3(2000f, 0f, 0f), new Vector3(0f, 0f, 2000f), new Vector3(2000f, 0f, 2000f),
+        };
+
+        var patrol = SearchPoints.Around(spots, Ground(), SearchPoints.MaxRadiusYalms);
+
+        Assert.Equal(SearchPoints.MaxPatrolPoints, patrol.Count);
+        Assert.All(spots, spot => Assert.Contains(spot, patrol));
+        // Each spot got the same share, nearest ring first.
+        Assert.All(spots, spot => Assert.Equal(10, patrol.Count(p => FarmRoamPolicy.Flat(p, spot) <= 170f)));
+    }
+
+    [Theory]
+    [InlineData(0f, 0)]
+    [InlineData(39f, 0)]
+    [InlineData(40f, 1)]
+    [InlineData(80f, 1)]
+    [InlineData(160f, 2)]
+    [InlineData(200f, 3)]
+    [InlineData(320f, 4)]
+    [InlineData(900f, 4)]
+    public void Rings_OnePerEightyYalms_UpToFour(float radius, int rings)
+    {
+        Assert.Equal(rings, SearchPoints.Rings(radius));
+    }
+
+    [Fact]
     public void Around_LeavesOutAPointWithNoFloor()
     {
         // Nothing to stand on east of the spot (water, or off the mesh).

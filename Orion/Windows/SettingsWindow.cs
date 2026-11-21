@@ -42,7 +42,7 @@ public sealed class SettingsWindow : Window
         var changed = false;
 
         Styling.SectionLabel("Travel");
-        ImGui.TextColored(Styling.TextDim, "Mounts up for long legs and flies where the zone allows it.");
+        Note("Mounts up for long legs and flies where the zone allows it.", Styling.TextDim);
 
         var roulette = farm.MountMode == FarmMountMode.Roulette;
         if (ImGui.RadioButton("Mount Roulette", roulette))
@@ -89,9 +89,9 @@ public sealed class SettingsWindow : Window
                 _unlockedMounts = null;
 
             if (_unlockedMounts is { Count: 0 })
-                ImGui.TextColored(Styling.TextDim, "No mounts unlocked on this character — Roulette will be used.");
+                Note("No mounts unlocked on this character — Roulette will be used.", Styling.TextDim);
             else if (farm.SpecificMountId != 0 && !_mountHelper.IsMountUnlocked(farm.SpecificMountId))
-                ImGui.TextColored(Styling.AccentRose, "Selected mount not unlocked here — falls back to Roulette.");
+                Note("Selected mount not unlocked here — falls back to Roulette.", Styling.AccentRose);
         }
 
         var flyWhenPossible = farm.FlyWhenPossible;
@@ -102,7 +102,7 @@ public sealed class SettingsWindow : Window
         }
 
         var mountThreshold = farm.MountDistanceThresholdYalms;
-        ImGui.SetNextItemWidth(180);
+        SetSliderWidth("mount when farther than (yalms)");
         if (ImGui.SliderFloat("mount when farther than (yalms)", ref mountThreshold, 20f, 120f, "%.0f"))
         {
             farm.MountDistanceThresholdYalms = mountThreshold;
@@ -110,7 +110,7 @@ public sealed class SettingsWindow : Window
         }
 
         var scanRadius = farm.ScanRadiusYalms;
-        ImGui.SetNextItemWidth(180);
+        SetSliderWidth("mob scan radius (yalms)");
         if (ImGui.SliderFloat("mob scan radius (yalms)", ref scanRadius, 10f, 100f, "%.0f"))
         {
             farm.ScanRadiusYalms = scanRadius;
@@ -134,8 +134,8 @@ public sealed class SettingsWindow : Window
             }
             ImGui.EndCombo();
         }
-        ImGui.TextColored(Styling.TextDim, "Only after a run that reached its goal, never one you stopped or that failed.");
-        ImGui.TextColored(Styling.TextDim, "Return uses the Return action; the others are Lifestream's trips.");
+        Note("Only after a run that reached its goal, never one you stopped or that failed.", Styling.TextDim);
+        Note("Return uses the Return action; the others are Lifestream's trips.", Styling.TextDim);
 
         Styling.VSpace(6f);
         Styling.SectionLabel("Edge tab");
@@ -145,7 +145,7 @@ public sealed class SettingsWindow : Window
             _configuration.EdgeDockEnabled = edgeDock;
             changed = true;
         }
-        ImGui.TextColored(Styling.TextDim, "Point at the tab for the panel, click to pin it, drag it to move it.");
+        Note("Point at the tab for the panel, click to pin it, drag it to move it.", Styling.TextDim);
 
         Styling.VSpace(6f);
         Styling.SectionLabel("Fleet");
@@ -155,9 +155,27 @@ public sealed class SettingsWindow : Window
             _configuration.ShareFleetStatus = share;
             changed = true;
         }
-        ImGui.TextColored(Styling.TextDim, "Sent over Daedalus's LAN bridge. What the others send is shown either way.");
+        Note("Sent over Daedalus's LAN bridge. What the others send is shown either way.", Styling.TextDim);
 
         if (changed)
             _saveConfiguration();
+    }
+
+    /// <summary>Help text that wraps at the window's edge instead of running off it.</summary>
+    private static void Note(string text, Vector4 color)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.TextWrapped(text);
+        ImGui.PopStyleColor();
+    }
+
+    /// <summary>
+    /// Sizes the next slider so the label on its right still fits: the usual width when there is room, narrower
+    /// when the window is. A fixed width pushed the label off the edge of a narrow window ("(yalr").
+    /// </summary>
+    private static void SetSliderWidth(string label)
+    {
+        var room = ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(label).X - ImGui.GetStyle().ItemInnerSpacing.X;
+        ImGui.SetNextItemWidth(Layout.SliderWidth(room));
     }
 }

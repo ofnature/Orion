@@ -684,23 +684,25 @@ public sealed class MainWindow : Window
                 var zone = Orion.Services.Travel.Zones.Name?.Invoke(plan.Zone.TerritoryId) ?? $"territory {plan.Zone.TerritoryId}";
                 ImGui.TextColored(Styling.AccentMint, $"None marked: START will travel to {zone} for {plan.Mob.Name}{level}");
                 ImGui.TextColored(Styling.AccentMint, "and mark the spots itself. Mark one here to farm where you stand instead.");
-
-                var search = _config.Farm.SearchRadiusYalms;
-                ImGui.SetNextItemWidth(180);
-                if (ImGui.SliderFloat("search area (yalms)", ref search, 0f, SearchPoints.MaxRadiusYalms, "%.0f"))
-                    _config.Farm.SearchRadiusYalms = search;
-                if (ImGui.IsItemDeactivatedAfterEdit())
-                    _saveConfig();
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("How far around each place the mob was reported Orion patrols.\nRaise it for mobs spread over a large area; 0 stands on the reported places alone.");
-                ImGui.SameLine();
-                var rings = SearchPoints.Rings(search);
-                ImGui.TextColored(Styling.TextDim, rings == 0 ? "reported places only" : $"{rings} ring(s) of search points");
             }
             else if (profile.Hunt == null && profile.Mobs.Count > 0)
             {
                 ImGui.TextColored(Styling.TextDim, "No recorded position for these mobs in a zone you can reach: go to them and mark a spot.");
             }
+
+            // Shown whenever no spot is marked, quarry picked or not: it only appeared once an item was
+            // chosen, so it could not be found to set beforehand (2026-11-21).
+            var search = _config.Farm.SearchRadiusYalms;
+            ImGui.SetNextItemWidth(180);
+            if (ImGui.SliderFloat("search area (yalms)", ref search, 0f, SearchPoints.MaxRadiusYalms, "%.0f"))
+                _config.Farm.SearchRadiusYalms = search;
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                _saveConfig();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("With no spot marked, Orion travels to where the mob was reported and patrols this far around each place.\nRaise it for mobs spread over a large area; 0 stands on the reported places alone.\nMarking a spot yourself turns this off: the leash is used instead.");
+            ImGui.SameLine();
+            var rings = SearchPoints.Rings(search);
+            ImGui.TextColored(Styling.TextDim, rings == 0 ? "reported places only" : $"{rings} ring(s) of search points");
         }
         if (ImGui.Button("Add spot (my position)"))
         {

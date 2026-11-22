@@ -96,6 +96,21 @@ public class SearchPointsTests
     }
 
     [Fact]
+    public void Around_KeepsThePatrolAwayFromPlacesToAvoid_ButNeverDropsTheRecordedSpot()
+    {
+        // The same mob stands at a higher level 100 yalms east of the spot.
+        var spot = new Vector3(0f, 0f, 0f);
+        var harder = new[] { new Vector2(100f, 0f) };
+
+        var patrol = SearchPoints.Around([spot], Ground(), radiusYalms: 160f, harder);
+
+        Assert.Equal(spot, patrol[0]);
+        Assert.All(patrol.Skip(1), p => Assert.True(Vector2.Distance(new Vector2(p.X, p.Z), harder[0]) >= SearchPoints.AvoidYalms));
+        Assert.True(patrol.Count < 13);                 // the east side is gone
+        Assert.Contains(patrol, p => p.X < -70f);       // the west side is still walked
+    }
+
+    [Fact]
     public void Around_LeavesOutAPointWithNoFloor()
     {
         // Nothing to stand on east of the spot (water, or off the mesh).

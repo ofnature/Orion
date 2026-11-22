@@ -120,6 +120,28 @@ public static class HuntRoute
     }
 
     /// <summary>
+    /// A zone's spots where the mob stands above its lowest group of levels: what
+    /// <see cref="Easiest"/> leaves out for being harder. A roaming run keeps its patrol away from
+    /// them, since a mob that will not be attacked can still attack. Spots of unknown level are
+    /// not among them, and none are when no level is known.
+    /// </summary>
+    public static IReadOnlyList<Vector2> Harder(HuntSpots zone)
+    {
+        var harder = new List<Vector2>();
+        var lowest = LowestLevel(zone);
+        if (lowest == Unknown)
+            return harder;
+
+        var levels = zone.SpotLevels!;
+        for (var i = 0; i < zone.Spots.Count && i < levels.Count; i++)
+        {
+            if (levels[i] - lowest > LevelBand)
+                harder.Add(zone.Spots[i]);
+        }
+        return harder;
+    }
+
+    /// <summary>
     /// The highest level worth attacking at a zone's chosen spots: the lowest level there plus
     /// <see cref="LevelBand"/>. 0 when no level is known, which means no limit.
     /// </summary>

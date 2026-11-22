@@ -25,6 +25,9 @@ public static class SearchPoints
     /// <summary>An extra point this near one already on the patrol adds nothing.</summary>
     public const float MinApartYalms = 50f;
 
+    /// <summary>How far the extra points stay from a place to avoid: a ring's step, past most mobs' aggro range.</summary>
+    public const float AvoidYalms = 80f;
+
     /// <summary>An extra point this far above or below its spot, per ring out, is up a cliff or down a hole.</summary>
     public const float MaxClimbYalms = 30f;
 
@@ -46,8 +49,13 @@ public static class SearchPoints
     /// </summary>
     /// <param name="floorAt">The floor of the zone's mesh at a world X and Z, or null where there is none.</param>
     /// <param name="radiusYalms">How far from each recorded spot to search.</param>
+    /// <param name="avoid">
+    /// World X and Z of places to keep the extra points away from (<see cref="AvoidYalms"/>): where
+    /// a hunt log mob stands at a higher level than the run is after.
+    /// </param>
     public static List<Vector3> Around(
-        IReadOnlyList<Vector3> spots, Func<float, float, Vector3?> floorAt, float radiusYalms = RingYalms)
+        IReadOnlyList<Vector3> spots, Func<float, float, Vector3?> floorAt, float radiusYalms = RingYalms,
+        IReadOnlyList<Vector2>? avoid = null)
     {
         var patrol = new List<Vector3>();
         if (spots.Count == 0)
@@ -77,12 +85,26 @@ public static class SearchPoints
                         continue;
                     if (IsNear(point, patrol) || IsNear(point, spots))
                         continue;
+                    if (avoid != null && IsNearAny(point, avoid))
+                        continue;
                     patrol.Add(point);
                     extra++;
                 }
             }
         }
         return patrol;
+    }
+
+    private static bool IsNearAny(Vector3 point, IReadOnlyList<Vector2> places)
+    {
+        foreach (var place in places)
+        {
+            var dx = point.X - place.X;
+            var dz = point.Z - place.Y;
+            if (dx * dx + dz * dz < AvoidYalms * AvoidYalms)
+                return true;
+        }
+        return false;
     }
 
     private static bool IsNear(Vector3 point, IReadOnlyList<Vector3> others)

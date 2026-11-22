@@ -92,6 +92,22 @@ public sealed class HuntRouteTests
     }
 
     [Fact]
+    public void Harder_IsTheSpotsAboveTheLowestGroup_AndNotTheUnknownOnes()
+    {
+        // Spot i stands at (i, i): 48 and 34 are harder than the 5-to-7 group; the 0 is unknown.
+        var zone = Levelled(CentralShroud, 48, 7, 34, 5, 0, 5);
+
+        Assert.Equal([new Vector2(0, 0), new Vector2(2, 2)], HuntRoute.Harder(zone));
+    }
+
+    [Fact]
+    public void Harder_IsEmpty_WhenNoLevelIsKnown_OrAllAreOneGroup()
+    {
+        Assert.Empty(HuntRoute.Harder(new HuntSpots(CentralShroud, [new Vector2(1f, 2f)])));
+        Assert.Empty(HuntRoute.Harder(Levelled(CentralShroud, 20, 23, 21)));
+    }
+
+    [Fact]
     public void Easiest_WithNoLevelsKnown_ChangesNothing_AndSetsNoLimit()
     {
         var zone = new HuntSpots(CentralShroud, [new Vector2(1f, 2f), new Vector2(3f, 4f)]);

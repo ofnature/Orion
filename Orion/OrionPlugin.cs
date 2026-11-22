@@ -102,6 +102,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         var positions = new HuntPositions(HuntPositions.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), DataManager, Warn);
         _hunt = new HuntLogRunner(
             catalog, huntProgress, positions, _farm, new SpotTravel(new Traveller(world), world, nav.FloorAt), world,
+            nav.FloorAt, () => _config.Farm.SearchRadiusYalms,
             () => ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0, GrandCompany, MissingTravelPlugin, Say);
 
         // Trophy Hunt with no spot marked: the same travel, to a zone one of the item's droppers lives in.

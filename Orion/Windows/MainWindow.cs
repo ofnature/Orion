@@ -699,7 +699,7 @@ public sealed class MainWindow : Window
             if (ImGui.IsItemDeactivatedAfterEdit())
                 _saveConfig();
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("With no spot marked, Orion travels to where the mob was reported and patrols this far around each place.\nRaise it for mobs spread over a large area; 0 stands on the reported places alone.\nMarking a spot yourself turns this off: the leash is used instead.");
+                ImGui.SetTooltip("With no spot marked, Orion travels to where the mob was reported and patrols this far around each place.\nRaise it for mobs spread over a large area; 0 stands on the reported places alone.\nMarking a spot yourself turns this off: the leash is used instead.\nHunt log runs roam the same area.");
             ImGui.SameLine();
             var rings = SearchPoints.Rings(search);
             ImGui.TextColored(Styling.TextDim, rings == 0 ? "reported places only" : $"{rings} ring(s) of search points");

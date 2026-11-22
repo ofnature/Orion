@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Orion.Services.Farm;
 using Orion.Services.Travel;
@@ -34,6 +35,8 @@ public sealed class HuntLogRunner : IDisposable
     private readonly FarmModeService _farm;
     private readonly SpotTravel _travel;
     private readonly ITravelWorld _world;
+    private readonly Func<float, float, Vector3?> _floorAt;
+    private readonly Func<float> _searchRadius;
     private readonly Func<uint> _currentClassJob;
     private readonly Func<uint> _grandCompany;
     private readonly Func<string?> _missingPlugin;
@@ -72,6 +75,8 @@ public sealed class HuntLogRunner : IDisposable
         FarmModeService farm,
         SpotTravel travel,
         ITravelWorld world,
+        Func<float, float, Vector3?> floorAt,
+        Func<float> searchRadius,
         Func<uint> currentClassJob,
         Func<uint> grandCompany,
         Func<string?> missingPlugin,
@@ -83,6 +88,8 @@ public sealed class HuntLogRunner : IDisposable
         _farm = farm;
         _travel = travel;
         _world = world;
+        _floorAt = floorAt;
+        _searchRadius = searchRadius;
         _currentClassJob = currentClassJob;
         _grandCompany = grandCompany;
         _missingPlugin = missingPlugin;
@@ -262,11 +269,22 @@ public sealed class HuntLogRunner : IDisposable
         profile.AddMob(leg.Target.NameId, leg.Target.MobName);
         profile.Hunt = leg.Target;
         profile.HuntMaxLevel = HuntRoute.LevelCap(leg.Zone);
+
+        // Roam the search area around the spots travelled to (the lowest-level ones), as Trophy
+        // Hunt does, with the patrol kept away from where the same mob stands at a higher level:
+        // the level limit stops Orion attacking those, not them attacking a low-level character.
+        var radius = _searchRadius();
+        var harder = new List<Vector2>();
+        foreach (var zone in _positions.For(leg.Target.NameId))
+        {
+            if (zone.TerritoryId == leg.Zone.TerritoryId)
+                harder.AddRange(HuntRoute.Harder(zone));
+        }
         profile.Spots.Clear();
-        profile.Spots.AddRange(_travel.Spots);
+        profile.Spots.AddRange(SearchPoints.Around(_travel.Spots, _floorAt, radius, harder));
         profile.TerritoryId = (ushort)leg.Zone.TerritoryId;
 
-        if (_farm.Start() is { } error)
+        if (_farm.Start(new FarmArea(_travel.Spots.ToArray(), SearchPoints.AreaRadius(radius))) is { } error)
         {
             Skip(error);
             return;

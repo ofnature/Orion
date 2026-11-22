@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Orion.Services.Game;
 using Orion.Services.HuntLog;
@@ -36,6 +37,12 @@ public sealed class TrophyRunner : IDisposable
 
     private Phase _phase;
     private TrophyLeg? _leg;
+
+    // The patrol this marked on its last trip and the area it goes with, to tell its own spots
+    // from ones the player marked.
+    private Vector3[] _patrol = [];
+    private uint _patrolTerritory;
+    private FarmArea? _area;
     private GearsetInfo _switchingTo;
     private DateTime _switchStarted;
 
@@ -147,8 +154,14 @@ public sealed class TrophyRunner : IDisposable
     private string? Go()
     {
         _phase = Phase.Idle;
-        if (_farm.Profile.Spots.Count > 0)
-            return _farm.Start();
+        var profile = _farm.Profile;
+        if (profile.Spots.Count > 0)
+        {
+            // Spots still as Orion marked them on the last trip: the same roaming run again.
+            // Spots the player marked or changed: a camp on them, kept to the leash.
+            var own = _area != null && profile.TerritoryId == _patrolTerritory && profile.Spots.SequenceEqual(_patrol);
+            return _farm.Start(own ? _area : null);
+        }
 
         if (Plan() is not { } leg)
             return "none of the listed mobs has a recorded position in a zone this character can reach — mark a spot yourself";
@@ -192,10 +205,14 @@ public sealed class TrophyRunner : IDisposable
                 // takes it from here.
                 _phase = Phase.Idle;
                 var profile = _farm.Profile;
+                var radius = _searchRadius();
+                _patrol = SearchPoints.Around(_travel.Spots, _floorAt, radius).ToArray();
+                _patrolTerritory = _leg!.Zone.TerritoryId;
+                _area = new FarmArea(_travel.Spots.ToArray(), SearchPoints.AreaRadius(radius));
                 profile.Spots.Clear();
-                profile.Spots.AddRange(SearchPoints.Around(_travel.Spots, _floorAt, _searchRadius()));
-                profile.TerritoryId = (ushort)_leg!.Zone.TerritoryId;
-                if (_farm.Start() is { } error)
+                profile.Spots.AddRange(_patrol);
+                profile.TerritoryId = (ushort)_patrolTerritory;
+                if (_farm.Start(_area) is { } error)
                     _say($"Trophy Hunt: arrived, but the farm would not start — {error}.");
                 break;
 

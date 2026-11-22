@@ -33,6 +33,12 @@ public static class SearchPoints
         => (int)MathF.Round(Math.Clamp(radiusYalms, 0f, MaxRadiusYalms) / RingYalms, MidpointRounding.AwayFromZero);
 
     /// <summary>
+    /// How far from a recorded spot the run may go for a search radius: out to its last ring, and
+    /// never less than one ring, so a search of nothing still takes the mobs around the spot.
+    /// </summary>
+    public static float AreaRadius(float radiusYalms) => Math.Max(Rings(radiusYalms), 1) * RingYalms;
+
+    /// <summary>
     /// The recorded spots, each followed by its rings of points, nearest ring first and each ring
     /// walked round in order. Left out: points with no floor, up a cliff, or on top of a point
     /// already kept or of another recorded spot. The recorded spots are always all kept; the extra

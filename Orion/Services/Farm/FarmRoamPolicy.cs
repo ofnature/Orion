@@ -17,6 +17,13 @@ public enum FarmRoamAction
 }
 
 /// <summary>
+/// The ground a roaming run keeps to: the places the mob was reported, and how far from them it
+/// may go. Trophy Hunt sets one when it marks the spots itself; a run on spots the player marked
+/// has none and keeps to the leash around them.
+/// </summary>
+public sealed record FarmArea(IReadOnlyList<Vector3> Centres, float RadiusYalms);
+
+/// <summary>
 /// Pure decision logic for the farm loop — kept free of Dalamud types so it is unit-testable.
 /// </summary>
 public static class FarmRoamPolicy
@@ -82,6 +89,44 @@ public static class FarmRoamPolicy
                 return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// How long a roaming run stands at a patrol point with nothing in sight before it moves to
+    /// the next. The longer respawn wait is for a camp on spots the player marked.
+    /// </summary>
+    public const double PatrolPauseSeconds = 4;
+
+    /// <summary>
+    /// Whether a mob stands inside the area a roaming run keeps to: within the radius of any of
+    /// the places the mob was reported, across the ground. The run scans from wherever the last
+    /// kill left the character, so this is what stops it drifting off after mob after mob.
+    /// </summary>
+    public static bool InArea(Vector3 mob, IReadOnlyList<Vector3> centres, float radiusYalms)
+    {
+        foreach (var centre in centres)
+        {
+            if (Flat(mob, centre) <= radiusYalms)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>The patrol point nearest the character, to carry on from after a kill; 0 when there is none.</summary>
+    public static int NearestSpotIndex(Vector3 player, IReadOnlyList<Vector3> spots)
+    {
+        var nearest = 0;
+        var best = float.MaxValue;
+        for (var i = 0; i < spots.Count; i++)
+        {
+            var distance = Flat(player, spots[i]);
+            if (distance < best)
+            {
+                best = distance;
+                nearest = i;
+            }
+        }
+        return nearest;
     }
 
     /// <summary>

@@ -72,6 +72,29 @@ public class SearchPointsTests
         Assert.Equal(rings, SearchPoints.Rings(radius));
     }
 
+    [Theory]
+    [InlineData(0f, 80f)]    // a search of nothing still takes the mobs around the spot
+    [InlineData(80f, 80f)]
+    [InlineData(160f, 160f)]
+    [InlineData(200f, 240f)] // out to the last ring, so no patrol point lies outside the area
+    [InlineData(320f, 320f)]
+    public void AreaRadius_ReachesTheLastRing_AndNeverLessThanOne(float radius, float area)
+    {
+        Assert.Equal(area, SearchPoints.AreaRadius(radius));
+    }
+
+    [Fact]
+    public void Around_EveryPatrolPointLiesInsideTheArea()
+    {
+        var spot = new Vector3(0f, 0f, 0f);
+
+        foreach (var radius in new[] { 0f, 100f, 200f, 320f })
+        {
+            var patrol = SearchPoints.Around([spot], Ground(), radius);
+            Assert.All(patrol, p => Assert.True(FarmRoamPolicy.InArea(p, [spot], SearchPoints.AreaRadius(radius) + 0.01f)));
+        }
+    }
+
     [Fact]
     public void Around_LeavesOutAPointWithNoFloor()
     {

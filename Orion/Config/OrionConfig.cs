@@ -21,7 +21,26 @@ public static class ModeNames
 
 public sealed class OrionConfig : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    /// <summary>The newest shape of this file. A saved one below it is brought up by <see cref="Upgrade"/>.</summary>
+    public const int CurrentVersion = 2;
+
+    public int Version { get; set; } = CurrentVersion;
+
+    /// <summary>
+    /// Brings a config saved by an older Orion up to date. True when something changed and it
+    /// wants saving. Version 2: the scan radius default went from 50 to 80 yalms, and a file still
+    /// on the old default takes the new one; a radius the player set themselves is left alone.
+    /// </summary>
+    public bool Upgrade()
+    {
+        if (Version >= CurrentVersion)
+            return false;
+
+        if (Version < 2 && Farm.ScanRadiusYalms == 50f)
+            Farm.ScanRadiusYalms = 80f;
+        Version = CurrentVersion;
+        return true;
+    }
 
     /// <summary>The mode the main window opens on.</summary>
     public OrionMode Mode { get; set; } = OrionMode.TrophyHunt;

@@ -52,8 +52,9 @@ public sealed class FarmConfig
     /// <summary>
     /// Mob acquisition scan radius around the player (yalms). The object table reliably covers
     /// ~100y in the open world — beyond that entries pop in and out, so 100 is the hard cap.
+    /// 80 since config version 2 (it was 50): a roaming run looks this far after every kill.
     /// </summary>
-    public float ScanRadiusYalms { get; set; } = 50f;
+    public float ScanRadiusYalms { get; set; } = 80f;
 
     /// <summary>Fly between spots/mobs when mounted and the zone allows it.</summary>
     public bool FlyWhenPossible { get; set; } = true;

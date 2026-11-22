@@ -59,6 +59,9 @@ public sealed class FarmModeService : IDisposable
     private bool _legSettled;
     private bool _rideQueuedPath;
 
+    /// <summary>The ground this run keeps to while it roams; null on marked spots.</summary>
+    private FarmArea? _area;
+
     // ---- v4 mounted travel state ----
     private const double MountCastTimeoutSeconds = 3.0;
     private const double MountGiveUpSeconds = 30.0;
@@ -116,7 +119,11 @@ public sealed class FarmModeService : IDisposable
         _log = log;
     }
 
-    public string? Start()
+    /// <param name="area">
+    /// The ground to keep to, for a run that roams: mobs are taken anywhere inside it, scanned for
+    /// from wherever the character stands. Null keeps to the leash around the profile's spots.
+    /// </param>
+    public string? Start(FarmArea? area = null)
     {
         if (IsRunning)
             return "already running";
@@ -130,6 +137,7 @@ public sealed class FarmModeService : IDisposable
             return "that hunt log target is already filled";
 
         IsRunning = true;
+        _area = area;
         _spotIndex = 0;
         _atSpot = false;
         ResetLeg();
@@ -251,20 +259,35 @@ public sealed class FarmModeService : IDisposable
             }
             _lastEngagedTargetId = 0;
             _foughtEngaged = false;
+
+            // Roaming: the fight ended somewhere new. If nothing else is in sight from here, the
+            // patrol carries on from the point nearest the character, not back where it left off.
+            if (_area != null && Profile.Spots.Count > 1)
+            {
+                _spotIndex = FarmRoamPolicy.NearestSpotIndex(player.Position, Profile.Spots);
+                _atSpot = false;
+            }
         }
 
         var spot = Profile.Spots[Math.Min(_spotIndex, Profile.Spots.Count - 1)];
 
-        // Acquire: finish anything on us first, then the nearest profile mob. The player-centered
-        // scan runs out to the v4 acquisition radius; a mob counts when it is inside the leash of
-        // any spot of the patrol or right beside the character (FarmRoamPolicy.InReach), so the
-        // widened funnel still cannot pull the toon far outside the patrol area.
+        // Acquire: finish anything on us first, then the nearest profile mob, scanned for around
+        // the character every poll, so after each kill the search starts from where it ended.
+        // Roaming (an area set): out to the scan radius, any mob inside the area, and none outside
+        // it however near, so mob after mob cannot lead the toon away (FarmRoamPolicy.InArea).
+        // On marked spots: inside the leash of any spot or right beside the character
+        // (FarmRoamPolicy.InReach).
         var scanRadius = Math.Clamp(_configuration.Farm.ScanRadiusYalms, 10f, 100f);
         var playerPosition = player.Position;
+        var area = _area;
         var candidate = _enemies.FindNearestAggroedEnemy(AggroCleanupRangeYalms, player)
             ?? _enemies.FindNearestEnemyByNameIds(
-                Profile.MobNameIds, Math.Max(scanRadius, Profile.LeashRadiusYalms), player,
-                mob => FarmRoamPolicy.InReach(mob, playerPosition, Profile.Spots, Profile.LeashRadiusYalms),
+                Profile.MobNameIds,
+                area != null ? scanRadius : Math.Max(scanRadius, Profile.LeashRadiusYalms),
+                player,
+                area != null
+                    ? mob => FarmRoamPolicy.InArea(mob, area.Centres, area.RadiusYalms)
+                    : mob => FarmRoamPolicy.InReach(mob, playerPosition, Profile.Spots, Profile.LeashRadiusYalms),
                 Profile.Hunt != null ? Profile.HuntMaxLevel : 0);
         if (candidate != null)
         {
@@ -576,7 +599,12 @@ public sealed class FarmModeService : IDisposable
             return;
         }
 
-        switch (FarmRoamPolicy.Decide(navBusy, toGo, idleSeconds, _configuration.Farm.RespawnWaitSeconds, Profile.Spots.Count))
+        // Roaming moves on from an empty point quickly; a camp on marked spots waits for respawns.
+        double wait = _configuration.Farm.RespawnWaitSeconds;
+        if (_area != null)
+            wait = Math.Min(wait, FarmRoamPolicy.PatrolPauseSeconds);
+
+        switch (FarmRoamPolicy.Decide(navBusy, toGo, idleSeconds, wait, Profile.Spots.Count))
         {
             case FarmRoamAction.MoveToSpot:
                 _vNav.PathfindAndMoveTo(_vNav.SnapToFloor(spot));

@@ -48,6 +48,34 @@ public class FarmReachTests
     }
 
     [Fact]
+    public void InArea_AMobAnywhereInsideTheRadiusOfAReportedPlace()
+    {
+        var centres = new[] { new Vector3(0f, 0f, 0f), new Vector3(1000f, 0f, 0f) };
+
+        Assert.True(FarmRoamPolicy.InArea(new Vector3(150f, 0f, 40f), centres, radiusYalms: 160f));
+        Assert.True(FarmRoamPolicy.InArea(new Vector3(1000f, 30f, -160f), centres, radiusYalms: 160f)); // across the ground
+    }
+
+    [Fact]
+    public void InArea_NotAMobPastTheRadius_HoweverNearTheCharacterItIs()
+    {
+        // The last kill left the character at the edge; the next mob is five yalms further out.
+        var centres = new[] { new Vector3(0f, 0f, 0f) };
+
+        Assert.False(FarmRoamPolicy.InArea(new Vector3(165f, 0f, 0f), centres, radiusYalms: 160f));
+    }
+
+    [Fact]
+    public void NearestSpotIndex_IsThePatrolPointClosestToTheCharacter()
+    {
+        var patrol = new[] { new Vector3(0f, 0f, 0f), new Vector3(0f, 0f, -80f), new Vector3(80f, 0f, 0f), new Vector3(0f, 0f, 80f) };
+
+        Assert.Equal(2, FarmRoamPolicy.NearestSpotIndex(new Vector3(70f, 0f, 20f), patrol));
+        Assert.Equal(0, FarmRoamPolicy.NearestSpotIndex(new Vector3(5f, 50f, 5f), patrol)); // height does not count
+        Assert.Equal(0, FarmRoamPolicy.NearestSpotIndex(new Vector3(5f, 0f, 5f), []));
+    }
+
+    [Fact]
     public void SpotIsOutOfReach_WhenThePathEndedNoNearer()
     {
         Assert.True(FarmRoamPolicy.SpotIsOutOfReach(

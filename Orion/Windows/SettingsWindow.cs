@@ -117,7 +117,7 @@ public sealed class SettingsWindow : Window
             changed = true;
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("How far around the character to look for the listed mobs.\nMobs must still be inside the spot leash.");
+            ImGui.SetTooltip("How far around the character to look for the listed mobs, after every kill.\nWhen Orion marked the spots itself, mobs must be inside the search area;\non spots you marked, inside the leash.");
 
         Styling.VSpace(6f);
         Styling.SectionLabel("When a run completes");

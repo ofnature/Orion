@@ -74,6 +74,8 @@ public sealed class OrionPlugin : IDalamudPlugin
         pluginInterface.Create<Service>();
 
         _config = PluginInterface.GetPluginConfig() as OrionConfig ?? new OrionConfig();
+        if (_config.Upgrade())
+            SaveConfig();
 
         var nav = new VNavService(PluginInterface, Log);
         var mounts = new FarmMountHelper(Condition, DataManager, ClientState, Log);

@@ -61,6 +61,8 @@ public sealed class OrionPlugin : IDalamudPlugin
     private DateTime? _confirmReturnUntil;
     private static readonly TimeSpan ReturnConfirmWindow = TimeSpan.FromSeconds(8);
     private readonly GarlandDropSource _dropSource;
+    private readonly WikiDropSource _wiki;
+    private readonly ItemContextMenu _itemMenu;
     private readonly OrionIpc _ipc;
     private readonly MainWindow _mainWindow;
     private readonly FleetPublisher _fleet;
@@ -116,10 +118,13 @@ public sealed class OrionPlugin : IDalamudPlugin
         // run fills its targets through farm mode, so a farm ending inside one is not the run ending.
         // A hunting list is the same: each item is a farm of its own, and only the list ending counts.
         var drops = new DropSources(DropSources.PathBeside(PluginInterface.AssemblyLocation.DirectoryName), Warn);
+        // The wiki, for an item the bundled list has no mob for. What it answered is remembered.
+        _wiki = new WikiDropSource(DataManager, positions, PluginInterface.GetPluginConfigDirectory(), Warn);
         var mobNames = DataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
         _lists = new TrophyListRunner(
             new TrophyHunt(_farm, _trophy,
-                itemId => drops.NamedMobsFor(itemId, nameId => mobNames.GetRowOrDefault(nameId)?.Singular.ExtractText())),
+                itemId => drops.NamedMobsFor(itemId, nameId => mobNames.GetRowOrDefault(nameId)?.Singular.ExtractText())
+                    is { Count: > 0 } listed ? listed : _wiki.MobsFor(itemId)),
             itemId => (int)ItemCount(itemId), () => world.IsDead, () => _hunt.IsRunning, Say);
         _farm.Ended += completed => { if (completed && !_hunt.IsRunning && !_lists.IsRunning) QueueHome(); };
         _hunt.Ended += completed => { if (completed) QueueHome(); };
@@ -141,8 +146,20 @@ public sealed class OrionPlugin : IDalamudPlugin
             _config, SaveConfig, _lists, itemId => (int)ItemCount(itemId),
             () => !nav.IsAvailable ? "install Ariadne or vnavmesh" : RunGoing ? "another run is going" : null);
         _mainWindow = new MainWindow(
-            _farm, _hunt, _trophy, _lists, listsPanel, _dropSource, drops, DataManager, TargetManager, ClientState, ObjectTable,
+            _farm, _hunt, _trophy, _lists, listsPanel, _dropSource, drops, _wiki, DataManager, TargetManager, ClientState, ObjectTable,
             () => nav.IsAvailable, huntLogPanel, _fleet, world, _config, SaveConfig, _settingsWindow.Toggle);
+
+        // "Hunt with Orion" on an item in the bags: the same as picking it in Trophy Hunt's search.
+        var items = DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        _itemMenu = new ItemContextMenu(
+            ContextMenu,
+            itemId => drops.MobsFor(itemId).Count > 0 || _wiki.MobsFor(itemId).Count > 0,
+            itemId => items.GetRowOrDefault(itemId)?.ItemSearchCategory.RowId ?? 0,
+            itemId =>
+            {
+                if (_mainWindow!.HuntItem(itemId) is { } error)
+                    Say($"That item was not set up: {error}.");
+            });
 
         // A trip home still to be sent counts: Daedalus should finish the last fight before it goes.
         _ipc = new OrionIpc(PluginInterface, () => RunGoing || _homeCommand is not null);
@@ -185,6 +202,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= _settingsWindow.Toggle;
         _windowSystem.RemoveAllWindows();
         _edgeDock.Dispose();
+        _itemMenu.Dispose();
         _ipc.Dispose();
         _fleet.Dispose();
         _hunt.Dispose();
@@ -194,6 +212,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _farm.Dispose();
         Zones.Name = null;
         _dropSource.Dispose();
+        _wiki.Dispose();
     }
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -202,6 +221,7 @@ public sealed class OrionPlugin : IDalamudPlugin
         _trophy.Tick();
         _farm.Update();
         _lists.Tick();
+        _wiki.Tick();
         _chocobo.Tick();
         _fleet.Tick();
         TickHome();

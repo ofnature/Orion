@@ -35,6 +35,7 @@ public sealed class MainWindow : Window
     private readonly HuntingListsPanel _lists;
     private readonly GarlandDropSource _dropSource;
     private readonly DropSources _drops;
+    private readonly WikiDropSource _wiki;
     private readonly IDataManager _dataManager;
     private readonly ITargetManager _targetManager;
     private readonly IClientState _clientState;
@@ -72,6 +73,9 @@ public sealed class MainWindow : Window
     private readonly Dictionary<ulong, string> _pendingLocations = new();
     private string _locationStatus = "";
 
+    // The item the wiki is being asked about for its droppers; 0 when nothing is waited for.
+    private uint _wikiWaitingFor;
+
     // "Is a navmesh plugin loaded" walks the installed-plugin list: asked once a second, not per frame.
     private bool _navOk;
     private long? _navCheckedAt;
@@ -84,6 +88,7 @@ public sealed class MainWindow : Window
         HuntingListsPanel lists,
         GarlandDropSource dropSource,
         DropSources drops,
+        WikiDropSource wiki,
         IDataManager dataManager,
         ITargetManager targetManager,
         IClientState clientState,
@@ -104,6 +109,7 @@ public sealed class MainWindow : Window
         _lists = lists;
         _dropSource = dropSource;
         _drops = drops;
+        _wiki = wiki;
         _dataManager = dataManager;
         _targetManager = targetManager;
         _clientState = clientState;
@@ -549,7 +555,7 @@ public sealed class MainWindow : Window
             _lastItemSearch = null;
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("List only items a mob is known to drop (FFXIV Teamcraft's list).\nThe list is not complete: untick to search every item.");
+            ImGui.SetTooltip("List only items a mob is known to drop (FFXIV Teamcraft's list).\nThe list is not complete: untick to search every item.\nFor an item the list has no mob for, Orion asks the wiki (ffxiv.consolegameswiki.com) who drops it.");
 
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##orionItemSearch",
@@ -570,13 +576,7 @@ public sealed class MainWindow : Window
                 foreach (var (id, name) in _itemResults)
                 {
                     if (ImGui.Selectable($"{name}##item{id}", profile.ItemId == id))
-                    {
-                        profile.ItemId = id;
-                        profile.ItemName = name;
-                        _itemSearch = "";
-                        _lastItemSearch = null;
-                        FillDroppers(profile, id);
-                    }
+                        PickItem(profile, id, name);
                 }
                 ImGui.EndListBox();
             }
@@ -652,6 +652,7 @@ public sealed class MainWindow : Window
         }
 
         ProcessPendingLocations(profile);
+        TakeWikiDroppers(profile);
         if (_locationStatus.Length > 0)
             ImGui.TextColored(Styling.TextDim, _locationStatus);
 
@@ -796,25 +797,88 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// A newly picked item brings its prey with it: the mob list becomes the item's known droppers
-    /// (the bundled Teamcraft list, so no lookup goes out). An item the list does not know leaves
-    /// the mob list as it was. Farm mode only ever fights the ones near a marked spot, so droppers
-    /// that live in other zones are harmless in the list.
+    /// Sets an item up as the quarry from outside the window (the inventory's right-click entry),
+    /// as picking it in the search does, and opens Trophy Hunt on it. Returns why not, or null.
+    /// </summary>
+    public string? HuntItem(uint itemId)
+    {
+        if (Busy)
+            return "a run is going — stop it first";
+        var name = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()?.GetRowOrDefault(itemId)?.Name.ExtractText();
+        if (string.IsNullOrEmpty(name))
+            return "the game has no such item";
+
+        var profile = _farm.Profile;
+        profile.Hunt = null;
+        _startError = null;
+        PickItem(profile, itemId, name);
+        ShowMode(OrionMode.TrophyHunt);
+        return null;
+    }
+
+    private void PickItem(FarmProfile profile, uint itemId, string name)
+    {
+        profile.ItemId = itemId;
+        profile.ItemName = name;
+        _itemSearch = "";
+        _lastItemSearch = null;
+        FillDroppers(profile, itemId);
+    }
+
+    /// <summary>
+    /// A newly picked item brings its prey with it: the mob list becomes the item's known droppers.
+    /// The bundled Teamcraft list is asked first, so no lookup goes out for an item it knows. For
+    /// one it does not, the wiki is asked (once: the answer is remembered), and the mob list stays
+    /// as it was until that comes back with a mob. Farm mode only ever fights the ones near a marked
+    /// spot, so droppers that live in other zones are harmless in the list.
     /// </summary>
     private void FillDroppers(FarmProfile profile, uint itemId)
     {
+        _wikiWaitingFor = 0;
         var names = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>();
         var droppers = _drops.NamedMobsFor(itemId, nameId => names?.GetRowOrDefault(nameId)?.Singular.ExtractText());
-        if (droppers.Count == 0)
+        if (droppers.Count > 0)
+        {
+            SetPrey(profile, droppers, "");
+            return;
+        }
+
+        _wiki.Request(itemId);
+        _wikiWaitingFor = itemId;
+        _locationStatus = $"The bundled list has no mob for {profile.ItemName}: asking the wiki.";
+        TakeWikiDroppers(profile);
+    }
+
+    /// <summary>The wiki's answer for the item being waited on, once it is in: its mobs, or why there are none.</summary>
+    private void TakeWikiDroppers(FarmProfile profile)
+    {
+        if (_wikiWaitingFor == 0)
+            return;
+        if (_wikiWaitingFor != profile.ItemId)
+        {
+            _wikiWaitingFor = 0;
+            return;
+        }
+        if (_wiki.IsLooking(profile.ItemId))
             return;
 
+        _wikiWaitingFor = 0;
+        var droppers = _wiki.MobsFor(profile.ItemId);
+        if (droppers.Count > 0)
+            SetPrey(profile, droppers, " from the wiki");
+        else
+            _locationStatus = $"No dropper found for {profile.ItemName}: {_wiki.Problem(profile.ItemId) ?? "the wiki lists no mob that drops it"}.";
+    }
+
+    private void SetPrey(FarmProfile profile, IReadOnlyList<FarmMob> droppers, string source)
+    {
         // New prey: spots marked for the last item's mobs no longer mean anything.
         profile.ClearMobs();
         profile.Spots.Clear();
         _planCheckedAt = null;
         foreach (var mob in droppers)
             profile.AddMob(mob.NameId, mob.Name);
-        _locationStatus = $"{profile.Mobs.Count} dropper(s) listed for {profile.ItemName}. Remove any you do not want.";
+        _locationStatus = $"{profile.Mobs.Count} dropper(s) listed for {profile.ItemName}{source}. Remove any you do not want.";
     }
 
     private void RebuildItemResults(bool droppedOnly)

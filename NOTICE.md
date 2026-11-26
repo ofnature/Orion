@@ -66,3 +66,17 @@ Henchman's mob spawn positions are **not** used and must not be: they live in it
 
 The main window's "Find droppers" asks `garlandtools.org` at runtime which mobs drop an item and
 where they stand. Nothing from it is bundled.
+
+### FFXIV Console Games Wiki
+
+For an item the bundled drop list has no mob for, Orion asks `ffxiv.consolegameswiki.com` at
+runtime for the item's page and reads its drop table (`Orion/Services/Farm/WikiDropTable.cs`).
+The answer is kept in `wiki-droppers.json` in the plugin's config folder on the player's machine.
+Nothing from the wiki is bundled.
+
+### Monster Loot Hunter (danielbrenom, MIT)
+
+No Monster Loot Hunter code is shipped. Reading it is where the wiki lookup came from (the
+MediaWiki parse endpoint, and that the drop table is the one classed `item`), and the right-click
+entry on inventory items (`Orion/Services/Game/ItemContextMenu.cs`) follows its "Loot search",
+with its list of market board categories for materials. The parser and the menu code are Orion's.

@@ -39,6 +39,7 @@ public sealed class HuntPositions
     private const uint OverworldUse = 1;
 
     private readonly Dictionary<uint, List<HuntSpots>> _byMob = new();
+    private readonly Dictionary<uint, List<HuntSpots>> _added = new();
 
     public static string PathBeside(string? assemblyDirectory)
         => Path.Combine(assemblyDirectory ?? string.Empty, "Assets", FileName);
@@ -97,9 +98,25 @@ public sealed class HuntPositions
         }
     }
 
-    /// <summary>The zones a mob has been seen in, or an empty list when nothing is recorded.</summary>
+    /// <summary>
+    /// The zones a mob has been seen in, or an empty list when nothing is recorded. The asset's
+    /// reports come first; a mob it does not know falls back to the places added from elsewhere.
+    /// </summary>
     public IReadOnlyList<HuntSpots> For(uint nameId)
-        => _byMob.TryGetValue(nameId, out var zones) ? zones : [];
+        => _byMob.TryGetValue(nameId, out var zones) ? zones
+            : _added.TryGetValue(nameId, out var added) ? added : [];
+
+    /// <summary>
+    /// A place for a mob from outside the asset (the wiki's coordinates). One zone per territory;
+    /// it only shows through <see cref="For"/> for a mob the asset has nothing on.
+    /// </summary>
+    public void Add(uint nameId, HuntSpots zone)
+    {
+        if (!_added.TryGetValue(nameId, out var zones))
+            _added[nameId] = zones = new List<HuntSpots>();
+        if (!zones.Exists(z => z.TerritoryId == zone.TerritoryId))
+            zones.Add(zone);
+    }
 
     /// <summary>
     /// The asset's <c>mobs</c> table: BNpcName id to <c>[map id, map x, map y, reports, level]</c>
